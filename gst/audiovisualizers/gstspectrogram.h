@@ -19,22 +19,22 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifndef __GST_SPECTRA_SCOPE_H__
-#define __GST_SPECTRA_SCOPE_H__
+#ifndef __GST_SPECTROGRAM_H__
+#define __GST_SPECTROGRAM_H__
 
 #include "gst/pbutils/gstaudiovisualizer.h"
 #include <gst/fft/gstffts16.h>
 
 G_BEGIN_DECLS
-#define GST_TYPE_SPECTRA_SCOPE            (gst_spectra_scope_get_type())
-#define GST_SPECTRA_SCOPE(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_SPECTRA_SCOPE,GstSpectraScope))
-#define GST_SPECTRA_SCOPE_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_SPECTRA_SCOPE,GstSpectraScopeClass))
-#define GST_IS_SPECTRA_SCOPE(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_SPECTRA_SCOPE))
-#define GST_IS_SPECTRA_SCOPE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_SPECTRA_SCOPE))
-typedef struct _GstSpectraScope GstSpectraScope;
-typedef struct _GstSpectraScopeClass GstSpectraScopeClass;
+#define GST_TYPE_SPECTROGRAM            (gst_spectrogram_get_type())
+#define GST_SPECTROGRAM(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_SPECTROGRAM,GstSpectrogram))
+#define GST_SPECTROGRAM_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_SPECTROGRAM,GstSpectrogramClass))
+#define GST_IS_SPECTROGRAM(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_SPECTROGRAM))
+#define GST_IS_SPECTROGRAM_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_SPECTROGRAM))
+typedef struct _GstSpectrogram GstSpectrogram;
+typedef struct _GstSpectrogramClass GstSpectrogramClass;
 
-struct _GstSpectraScope
+struct _GstSpectrogram
 {
   GstAudioVisualizer parent;
 
@@ -42,13 +42,13 @@ struct _GstSpectraScope
   GstFFTS16Complex *freq_data;
 };
 
-struct _GstSpectraScopeClass
+struct _GstSpectrogramClass
 {
   GstAudioVisualizerClass parent_class;
 };
 
-GType gst_spectra_scope_get_type (void);
-gboolean gst_spectra_scope_plugin_init (GstPlugin * plugin);
+GType gst_spectrogram_get_type (void);
+gboolean gst_spectrogram_plugin_init (GstPlugin * plugin);
 
 G_END_DECLS
-#endif /* __GST_SPECTRA_SCOPE_H__ */
+#endif /* __GST_SPECTROGRAM_H__ */

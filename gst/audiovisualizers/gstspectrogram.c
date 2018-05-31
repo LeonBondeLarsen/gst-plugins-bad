@@ -1,7 +1,7 @@
 /* GStreamer
  * Copyright (C) <2011> Stefan Kost <ensonic@users.sf.net>
  *
- * gstspectrascope.c: frequency spectrum scope
+ * gstspectrogram.c: Spectrogram
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,16 +20,15 @@
 
  */
 /**
- * SECTION:element-spectrascope
- * @title: spectrascope
+ * SECTION:element-spectrogram
+ * @title: spectrogram
  * @see_also: goom
  *
- * Spectrascope is a simple spectrum visualisation element. It renders the
- * frequency spectrum as a series of bars.
+ * Spectrogram
  *
  * ## Example launch line
  * |[
- * gst-launch-1.0 audiotestsrc ! audioconvert ! spectrascope ! ximagesink
+ * gst-launch-1.0 audiotestsrc ! audioconvert ! spectrogram ! ximagesink
  * ]|
  *
  */
@@ -38,7 +37,7 @@
 #endif
 #include <stdlib.h>
 
-#include "gstspectrascope.h"
+#include "gstspectrogram.h"
 
 #if G_BYTE_ORDER == G_BIG_ENDIAN
 #define RGB_ORDER "xRGB"
@@ -46,14 +45,14 @@
 #define RGB_ORDER "BGRx"
 #endif
 
-static GstStaticPadTemplate gst_spectra_scope_src_template =
+static GstStaticPadTemplate gst_spectrogram_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE (RGB_ORDER))
     );
 
-static GstStaticPadTemplate gst_spectra_scope_sink_template =
+static GstStaticPadTemplate gst_spectrogram_sink_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
@@ -65,50 +64,50 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     );
 
 
-GST_DEBUG_CATEGORY_STATIC (spectra_scope_debug);
-#define GST_CAT_DEFAULT spectra_scope_debug
+GST_DEBUG_CATEGORY_STATIC (spectrogram_debug);
+#define GST_CAT_DEFAULT spectrogram_debug
 
-static void gst_spectra_scope_finalize (GObject * object);
+static void gst_spectrogram_finalize (GObject * object);
 
-static gboolean gst_spectra_scope_setup (GstAudioVisualizer * scope);
-static gboolean gst_spectra_scope_render (GstAudioVisualizer * scope,
+static gboolean gst_spectrogram_setup (GstAudioVisualizer * scope);
+static gboolean gst_spectrogram_render (GstAudioVisualizer * scope,
     GstBuffer * audio, GstVideoFrame * video);
 
 
-G_DEFINE_TYPE (GstSpectraScope, gst_spectra_scope, GST_TYPE_AUDIO_VISUALIZER);
+G_DEFINE_TYPE (GstSpectrogram, gst_spectrogram, GST_TYPE_AUDIO_VISUALIZER);
 
 static void
-gst_spectra_scope_class_init (GstSpectraScopeClass * g_class)
+gst_spectrogram_class_init (GstSpectrogramClass * g_class)
 {
   GObjectClass *gobject_class = (GObjectClass *) g_class;
   GstElementClass *element_class = (GstElementClass *) g_class;
   GstAudioVisualizerClass *scope_class = (GstAudioVisualizerClass *) g_class;
 
-  gobject_class->finalize = gst_spectra_scope_finalize;
+  gobject_class->finalize = gst_spectrogram_finalize;
 
   gst_element_class_set_static_metadata (element_class,
-      "Frequency spectrum scope", "Visualization",
-      "Simple frequency spectrum scope", "Stefan Kost <ensonic@users.sf.net>");
+      "Spectrogram", "Visualization",
+      "Simple spectrogram", "Leon Bonde Larsen <leon@bondelarsen.dk>");
 
   gst_element_class_add_static_pad_template (element_class,
-      &gst_spectra_scope_src_template);
+      &gst_spectrogram_src_template);
   gst_element_class_add_static_pad_template (element_class,
-      &gst_spectra_scope_sink_template);
+      &gst_spectrogram_sink_template);
 
-  scope_class->setup = GST_DEBUG_FUNCPTR (gst_spectra_scope_setup);
-  scope_class->render = GST_DEBUG_FUNCPTR (gst_spectra_scope_render);
+  scope_class->setup = GST_DEBUG_FUNCPTR (gst_spectrogram_setup);
+  scope_class->render = GST_DEBUG_FUNCPTR (gst_spectrogram_render);
 }
 
 static void
-gst_spectra_scope_init (GstSpectraScope * scope)
+gst_spectrogram_init (GstSpectrogram * scope)
 {
   /* do nothing */
 }
 
 static void
-gst_spectra_scope_finalize (GObject * object)
+gst_spectrogram_finalize (GObject * object)
 {
-  GstSpectraScope *scope = GST_SPECTRA_SCOPE (object);
+  GstSpectrogram *scope = GST_SPECTROGRAM (object);
 
   if (scope->fft_ctx) {
     gst_fft_s16_free (scope->fft_ctx);
@@ -119,13 +118,13 @@ gst_spectra_scope_finalize (GObject * object)
     scope->freq_data = NULL;
   }
 
-  G_OBJECT_CLASS (gst_spectra_scope_parent_class)->finalize (object);
+  G_OBJECT_CLASS (gst_spectrogram_parent_class)->finalize (object);
 }
 
 static gboolean
-gst_spectra_scope_setup (GstAudioVisualizer * bscope)
+gst_spectrogram_setup (GstAudioVisualizer * bscope)
 {
-  GstSpectraScope *scope = GST_SPECTRA_SCOPE (bscope);
+  GstSpectrogram *scope = GST_SPECTROGRAM (bscope);
   guint num_freq = GST_VIDEO_INFO_WIDTH (&bscope->vinfo) + 1;
 
   if (scope->fft_ctx)
@@ -165,10 +164,10 @@ add_pixel (guint32 * _p, guint32 _c)
 }
 
 static gboolean
-gst_spectra_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
+gst_spectrogram_render (GstAudioVisualizer * bscope, GstBuffer * audio,
     GstVideoFrame * video)
 {
-  GstSpectraScope *scope = GST_SPECTRA_SCOPE (bscope);
+  GstSpectrogram *scope = GST_SPECTROGRAM (bscope);
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
   guint x, y, off, l;
@@ -230,11 +229,11 @@ gst_spectra_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
 }
 
 gboolean
-gst_spectra_scope_plugin_init (GstPlugin * plugin)
+gst_spectrogram_plugin_init (GstPlugin * plugin)
 {
-  GST_DEBUG_CATEGORY_INIT (spectra_scope_debug, "spectrascope", 0,
+  GST_DEBUG_CATEGORY_INIT (spectrogram_debug, "spectrascope", 0,
       "spectrascope");
 
   return gst_element_register (plugin, "spectrascope", GST_RANK_NONE,
-      GST_TYPE_SPECTRA_SCOPE);
+      GST_TYPE_SPECTROGRAM);
 }
