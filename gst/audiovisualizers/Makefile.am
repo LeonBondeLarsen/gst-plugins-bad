@@ -4,7 +4,8 @@ libgstaudiovisualizers_la_SOURCES = plugin.c \
     gstspacescope.c gstspacescope.h \
     gstspectrascope.c gstspectrascope.h \
     gstsynaescope.c gstsynaescope.h \
-    gstwavescope.c gstwavescope.h
+    gstwavescope.c gstwavescope.h \
+	gstspectrogram.c gstsoectrogram.h
 
 libgstaudiovisualizers_la_CFLAGS = $(GST_PLUGINS_BAD_CFLAGS) \
 	$(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) \
@@ -19,4 +20,5 @@ noinst_HEADERS = gstdrawhelpers.h \
 	gstspacescope.h \
 	gstspectrascope.h \
 	gstsynaescope.h \
-	gstwavescope.h
+	gstwavescope.h \
+	gstspectrogram.h
