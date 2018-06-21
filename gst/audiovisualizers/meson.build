@@ -4,6 +4,7 @@ audiovis_sources = [
   'gstspectrascope.c',
   'gstsynaescope.c',
   'gstwavescope.c',
+  'gstspectrogram.c'
 ]
 
 gstaudiovisualizers = library('gstaudiovisualizers',

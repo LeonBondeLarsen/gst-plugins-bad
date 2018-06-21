@@ -5,7 +5,7 @@ libgstaudiovisualizers_la_SOURCES = plugin.c \
     gstspectrascope.c gstspectrascope.h \
     gstsynaescope.c gstsynaescope.h \
     gstwavescope.c gstwavescope.h \
-	gstspectrogram.c gstsoectrogram.h
+	gstspectrogram.c gstspectrogram.h
 
 libgstaudiovisualizers_la_CFLAGS = $(GST_PLUGINS_BAD_CFLAGS) \
 	$(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) \

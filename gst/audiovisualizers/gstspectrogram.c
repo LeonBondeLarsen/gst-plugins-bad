@@ -45,6 +45,8 @@
 #define RGB_ORDER "BGRx"
 #endif
 
+GstMemory *y_array;
+
 static GstStaticPadTemplate gst_spectrogram_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
@@ -127,6 +129,10 @@ gst_spectrogram_setup (GstAudioVisualizer * bscope)
   GstSpectrogram *scope = GST_SPECTROGRAM (bscope);
   guint num_freq = GST_VIDEO_INFO_WIDTH (&bscope->vinfo) + 1;
 
+  guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
+  guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
+  y_array = gst_allocator_alloc (NULL, w * h, NULL);
+
   if (scope->fft_ctx)
     gst_fft_s16_free (scope->fft_ctx);
   g_free (scope->freq_data);
@@ -170,13 +176,18 @@ gst_spectrogram_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   GstSpectrogram *scope = GST_SPECTROGRAM (bscope);
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
-  guint x, y, off, l;
+  guint x, y, value, off, r_index, w_index;
   guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
   gfloat fr, fi;
   GstMapInfo amap;
   guint32 *vdata;
   gint channels;
+  //static guint y_array[640][480];
+  static guint ptr = 0;
+
+  GstMapInfo y_array_rw;
+  gst_memory_map (y_array, &y_array_rw, GST_MAP_READ | GST_MAP_WRITE);
 
   gst_buffer_map (audio, &amap, GST_MAP_READ);
   vdata = (guint32 *) GST_VIDEO_FRAME_PLANE_DATA (video, 0);
@@ -205,24 +216,36 @@ gst_spectrogram_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   gst_fft_s16_fft (scope->fft_ctx, mono_adata, fdata);
   g_free (mono_adata);
 
-  /* draw lines */
+  /* increment pointer and test for overflow */
+  ptr++;
+  if (ptr > w) {
+    ptr = 0;
+  }
+
+  /* for each pixel in the current fft line, calculate fft height and push to array */
+  for (y = 0; y < h; y++) {
+    fr = (gfloat) fdata[1 + y].r / 512.0;
+    fi = (gfloat) fdata[1 + y].i / 512.0;
+    value = (guint) (h * sqrt (fr * fr + fi * fi));
+    //y_array_rw.data[ptr][y] = x;
+    w_index = (y * w) + ptr;
+    y_array_rw.data[w_index] = value;
+  }
+
+  /* draw array */
   for (x = 0; x < w; x++) {
-    /* figure out the range so that we don't need to clip,
-     * or even better do a log mapping? */
-    fr = (gfloat) fdata[1 + x].r / 512.0;
-    fi = (gfloat) fdata[1 + x].i / 512.0;
-    y = (guint) (h * sqrt (fr * fr + fi * fi));
-    if (y > h)
-      y = h;
-    y = h - y;
-    off = (y * w) + x;
-    vdata[off] = 0x00FFFFFF;
-    for (l = y; l < h; l++) {
-      off += w;
-      add_pixel (&vdata[off], 0x007F7F7F);
+    for (y = 0; y < h; y++) {
+      off = ((h - y - 1) * w) + x;
+      if (off > (h * w)) {
+        printf ("PANIC!");
+      }
+      r_index = (y * w) + x;
+      //vdata[off] = (y_array_rw.data[x][y] << 16) | (y_array_rw.data[x][y] << 8) | (y_array_rw.data[x][y]);
+      vdata[off] =
+          (y_array_rw.
+          data[r_index] << 16) | (y_array_rw.data[r_index] << 8) | (y_array_rw.
+          data[r_index]);
     }
-    /* ensure bottom line is full bright (especially in move-up mode) */
-    add_pixel (&vdata[off], 0x007F7F7F);
   }
   gst_buffer_unmap (audio, &amap);
   return TRUE;
@@ -231,9 +254,8 @@ gst_spectrogram_render (GstAudioVisualizer * bscope, GstBuffer * audio,
 gboolean
 gst_spectrogram_plugin_init (GstPlugin * plugin)
 {
-  GST_DEBUG_CATEGORY_INIT (spectrogram_debug, "spectrascope", 0,
-      "spectrascope");
+  GST_DEBUG_CATEGORY_INIT (spectrogram_debug, "spectrogram", 0, "spectrogram");
 
-  return gst_element_register (plugin, "spectrascope", GST_RANK_NONE,
+  return gst_element_register (plugin, "spectrogram", GST_RANK_NONE,
       GST_TYPE_SPECTROGRAM);
 }

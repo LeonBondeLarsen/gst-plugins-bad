@@ -3394,6 +3394,22 @@ GST_TYPE_SPECTRA_SCOPE
 gst_spectra_scope_get_type
 </SECTION>
 
+<SECTION>                                                                        
+<FILE>element-spectrogram</FILE>                                                
+<TITLE>spectrogram</TITLE>                                                      
+GstSpectrogram                                                                  
+<SUBSECTION Standard>                                                            
+GstSpectrogramClass                                                             
+GST_SPECTROGRAM                                                                
+GST_SPECTROGRAM_CAST                                                           
+GST_IS_SPECTROGRAM                                                             
+GST_SPECTROGRAM_CLASS                                                          
+GST_IS_SPECTROGRAM_CLASS                                                       
+GST_TYPE_SPECTROGRAM                                                           
+<SUBSECTION Private>                                                             
+gst_spectrogram_get_type                                                       
+</SECTION> 
+
 <SECTION>
 <FILE>element-speed</FILE>
 <TITLE>speed</TITLE>
