@@ -172,7 +172,7 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
-  guint x = 0, y = 0;
+  guint x = 0, y = 0, x_ptr = 0;
   guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
   gfloat fr, fi;
@@ -225,10 +225,12 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
 
   /* draw array */
   for (x = 0; x < w; x++) {
+    x_ptr = (collumn_pointer + x + 1) % w;
     for (y = 0; y < h; y++) {
       off = ((h - y - 1) * w) + x;
       vdata[off] =
-          (fft_array[x][y] << 16) | (fft_array[x][y] << 8) | (fft_array[x][y]);
+          (fft_array[x_ptr][y] << 16) | (fft_array[x_ptr][y] << 8) |
+          (fft_array[x_ptr][y]);
     }
   }
 
