@@ -132,7 +132,7 @@ gst_spectrogram_setup (GstAudioVisualizer * bscope)
   guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
   y_array = gst_allocator_alloc (NULL, w * h, NULL);
-
+  printf ("Initialising...");
   if (scope->fft_ctx)
     gst_fft_s16_free (scope->fft_ctx);
   g_free (scope->freq_data);
