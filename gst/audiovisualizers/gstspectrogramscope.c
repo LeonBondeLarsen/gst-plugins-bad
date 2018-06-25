@@ -172,13 +172,17 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
-  guint x, y, off, l;
+  guint x = 0, y = 0;
   guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
   gfloat fr, fi;
   GstMapInfo amap;
   guint32 *vdata;
+  guint32 off = 0;
   gint channels;
+
+  static guint fft_array[SPECTROGRAM_WIDTH][SPECTROGRAM_HIGHT];
+  static guint32 collumn_pointer = 0;
 
   gst_buffer_map (audio, &amap, GST_MAP_READ);
   vdata = (guint32 *) GST_VIDEO_FRAME_PLANE_DATA (video, 0);
@@ -207,25 +211,27 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   gst_fft_s16_fft (scope->fft_ctx, mono_adata, fdata);
   g_free (mono_adata);
 
-  /* draw lines */
-  for (x = 0; x < w; x++) {
-    /* figure out the range so that we don't need to clip,
-     * or even better do a log mapping? */
-    fr = (gfloat) fdata[1 + x].r / 512.0;
-    fi = (gfloat) fdata[1 + x].i / 512.0;
-    y = (guint) (h * sqrt (fr * fr + fi * fi));
-    if (y > h)
-      y = h;
-    y = h - y;
-    off = (y * w) + x;
-    vdata[off] = 0x00FFFFFF;
-    for (l = y; l < h; l++) {
-      off += w;
-      add_pixel (&vdata[off], 0x007F7F7F);
-    }
-    /* ensure bottom line is full bright (especially in move-up mode) */
-    add_pixel (&vdata[off], 0x007F7F7F);
+  collumn_pointer++;
+  if (collumn_pointer == SPECTROGRAM_WIDTH) {
+    collumn_pointer = 0;
   }
+
+  /* for each pixel in the current fft line, calculate fft height and push to array */
+  for (y = 0; y < h; y++) {
+    fr = (gfloat) fdata[1 + y].r / 512.0;
+    fi = (gfloat) fdata[1 + y].i / 512.0;
+    fft_array[collumn_pointer][y] = (guint) (h * sqrt (fr * fr + fi * fi));
+  }
+
+  /* draw array */
+  for (x = 0; x < w; x++) {
+    for (y = 0; y < h; y++) {
+      off = ((h - y - 1) * w) + x;
+      vdata[off] =
+          (fft_array[x][y] << 16) | (fft_array[x][y] << 8) | (fft_array[x][y]);
+    }
+  }
+
   gst_buffer_unmap (audio, &amap);
   return TRUE;
 }

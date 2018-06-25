@@ -24,6 +24,10 @@
 
 #include "gst/pbutils/gstaudiovisualizer.h"
 #include <gst/fft/gstffts16.h>
+#include <stdio.h>
+
+#define SPECTROGRAM_WIDTH 320
+#define SPECTROGRAM_HIGHT 200
 
 G_BEGIN_DECLS
 #define GST_TYPE_SPECTROGRAM_SCOPE            (gst_spectrogram_scope_get_type())
