@@ -3395,19 +3395,19 @@ gst_spectra_scope_get_type
 </SECTION>
 
 <SECTION>                                                                        
-<FILE>element-spectrogram</FILE>                                                
-<TITLE>spectrogram</TITLE>                                                      
-GstSpectrogram                                                                  
+<FILE>element-spectrogramscope</FILE>                                                
+<TITLE>spectrogramscope</TITLE>                                                      
+GstSpectrogramScope                                                                  
 <SUBSECTION Standard>                                                            
-GstSpectrogramClass                                                             
-GST_SPECTROGRAM                                                                
-GST_SPECTROGRAM_CAST                                                           
-GST_IS_SPECTROGRAM                                                             
-GST_SPECTROGRAM_CLASS                                                          
-GST_IS_SPECTROGRAM_CLASS                                                       
-GST_TYPE_SPECTROGRAM                                                           
+GstSpectrogramScopeClass                                                             
+GST_SPECTROGRAM_SCOPE                                                                
+GST_SPECTROGRAM_SCOPE_CAST                                                           
+GST_IS_SPECTROGRAM_SCOPE                                                             
+GST_SPECTROGRAM_SCOPE_CLASS                                                          
+GST_IS_SPECTROGRAM_SCOPE_CLASS                                                       
+GST_TYPE_SPECTROGRAM_SCOPE                                                           
 <SUBSECTION Private>                                                             
-gst_spectrogram_get_type                                                       
+gst_spectrogram_scope_get_type                                                       
 </SECTION> 
 
 <SECTION>
