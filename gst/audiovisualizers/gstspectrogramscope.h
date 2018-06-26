@@ -44,6 +44,9 @@ struct _GstSpectrogramScope
 
   GstFFTS16 *fft_ctx;
   GstFFTS16Complex *freq_data;
+
+  gint colormap;
+  gint32 (*colormap_function)(guint);
 };
 
 struct _GstSpectrogramScopeClass
