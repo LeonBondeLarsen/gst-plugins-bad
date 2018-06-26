@@ -46,6 +46,40 @@
 #define RGB_ORDER "BGRx"
 #endif
 
+// Enumeration of the properties
+enum
+{
+  PROP_0,
+  PROP_COLORMAP
+};
+
+// Enumeration of the options for the colormap property
+enum
+{
+  COLORMAP_GREY = 0,
+  COLORMAP_GOLD
+};
+
+// Function prototypes
+static void gst_spectrogram_scope_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+static void gst_spectrogram_scope_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+static void gst_spectrogram_scope_finalize (GObject * object);
+static gboolean gst_spectrogram_scope_setup (GstAudioVisualizer * scope);
+static gboolean gst_spectrogram_scope_render (GstAudioVisualizer * scope,
+    GstBuffer * audio, GstVideoFrame * video);
+static gint32 gst_spectrogram_scope_greymap (gint);
+static gint32 gst_spectrogram_scope_colormap (gint);
+
+// Gstreamer declarations
+#define GST_TYPE_SPECTROGRAM_SCOPE_STYLE (gst_spectrogram_scope_colormap_get_type ())
+#define GST_CAT_DEFAULT spectrogram_scope_debug
+
+GST_DEBUG_CATEGORY_STATIC (spectrogram_scope_debug);
+G_DEFINE_TYPE (GstSpectrogramScope, gst_spectrogram_scope,
+    GST_TYPE_AUDIO_VISUALIZER);
+
 static GstStaticPadTemplate gst_spectrogram_scope_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
@@ -64,19 +98,6 @@ GST_STATIC_PAD_TEMPLATE ("sink",
         "channels = (int) 2, " "channel-mask = (bitmask) 0x3")
     );
 
-enum
-{
-  PROP_0,
-  PROP_COLORMAP
-};
-
-enum
-{
-  COLORMAP_GREY = 0,
-  COLORMAP_GOLD
-};
-
-#define GST_TYPE_SPECTROGRAM_SCOPE_STYLE (gst_spectrogram_scope_colormap_get_type ())
 static GType
 gst_spectrogram_scope_colormap_get_type (void)
 {
@@ -93,24 +114,6 @@ gst_spectrogram_scope_colormap_get_type (void)
   }
   return gtype;
 }
-
-static void gst_spectrogram_scope_set_property (GObject * object, guint prop_id,
-    const GValue * value, GParamSpec * pspec);
-static void gst_spectrogram_scope_get_property (GObject * object, guint prop_id,
-    GValue * value, GParamSpec * pspec);
-
-GST_DEBUG_CATEGORY_STATIC (spectrogram_scope_debug);
-#define GST_CAT_DEFAULT spectrogram_scope_debug
-
-static void gst_spectrogram_scope_finalize (GObject * object);
-
-static gboolean gst_spectrogram_scope_setup (GstAudioVisualizer * scope);
-static gboolean gst_spectrogram_scope_render (GstAudioVisualizer * scope,
-    GstBuffer * audio, GstVideoFrame * video);
-
-
-G_DEFINE_TYPE (GstSpectrogramScope, gst_spectrogram_scope,
-    GST_TYPE_AUDIO_VISUALIZER);
 
 static void
 gst_spectrogram_scope_class_init (GstSpectrogramScopeClass * g_class)
@@ -170,83 +173,89 @@ static gboolean
 gst_spectrogram_scope_setup (GstAudioVisualizer * bscope)
 {
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
-  guint num_freq = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) + 1;
+  guint video_width, video_height;
 
+  video_width = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
+  video_height = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
+
+  //guint num_freq = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) + 1;
+
+  // Calculate number of samples needed per render() call
+  bscope->req_spf = video_height * 2 - 2;
+
+  // Allocate GstFFTS16 and GstFFTS16Complex objects
   if (scope->fft_ctx)
     gst_fft_s16_free (scope->fft_ctx);
   g_free (scope->freq_data);
 
-  /* we'd need this amount of samples per render() call */
-  bscope->req_spf = num_freq * 2 - 2;
   scope->fft_ctx = gst_fft_s16_new (bscope->req_spf, FALSE);
-  scope->freq_data = g_new (GstFFTS16Complex, num_freq);
+  scope->freq_data = g_new (GstFFTS16Complex, video_width + 1);
 
-  guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
-  guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
-
-  printf ("Setting size to %d x %d\n", w, h);
-  scope->fft_array = gst_allocator_alloc (NULL, w * h, NULL);
-
+  // Allocate memory for holding the fft data for the spectrogram
+  scope->fft_array =
+      gst_allocator_alloc (NULL, video_width * video_height, NULL);
   gst_memory_map (scope->fft_array, &scope->fft_array_info,
       GST_MAP_READ | GST_MAP_WRITE);
 
   return TRUE;
 }
 
-gint32
-gst_spectrogram_scope_greymap (gint color)
+static gint32
+gst_spectrogram_scope_greymap (gint intensity)
 {
-  return (color << 16) | (color << 8) | color;
+  // Set all three colors to the current intensity
+  return (intensity << 16) | (intensity << 8) | intensity;
 }
 
-gint32
+static gint32
 gst_spectrogram_scope_colormap (gint color)
 {
-  static gint max = 1;
-  guint r = 0, g = 0, b = 0;
+  guint red, green, blue;
+  static gfloat normalised_input, color_number, group, residue;
 
+  // Update max value so far
+  static gint max = 1;
   if (color > max) {
     max = color;
     printf ("New max = %d\n", max);
   }
+  // Normalise input and find the color number, color group and the residue
+  normalised_input = (gfloat) color / (gfloat) max;
+  color_number = normalised_input / 0.25;
+  group = floor (color_number);
+  residue = floor (255 * (color_number - group));
 
-  gfloat normalised_input = (gfloat) color / (gfloat) max;
-  if (normalised_input > 1)
-    normalised_input = 1;
-
-  gfloat a = normalised_input / 0.25;
-  gfloat group = floor (a);
-  gfloat Y = floor (255 * (a - group));
-
+  // Find color mix from group and residue
   switch ((gint) group) {
     case 0:                    //black to yellow
-      r = Y;
-      g = Y;
-      b = 0;
+      red = residue;
+      green = residue;
+      blue = 0;
       break;
     case 1:                    //yellow to red
-      r = 255;
-      g = 255 - Y;
-      b = 0;
+      red = 255;
+      green = 255 - residue;
+      blue = 0;
       break;
     case 2:                    //red to magenta
-      r = 255;
-      g = 0;
-      b = Y;
+      red = 255;
+      green = 0;
+      blue = residue;
       break;
     case 3:                    //magenta to white
-      r = 255;
-      g = Y;
-      b = 255;
+      red = 255;
+      green = residue;
+      blue = 255;
       break;
     default:
-      r = 255;
-      g = 255;
-      b = 255;
+      red = 255;
+      green = 255;
+      blue = 255;
       break;
   }
 
-  return (r << 16) | (g << 8) | b;
+  // Return 32-bit color
+  return (red << 16) | (green << 8) | blue;
 }
 
 static gboolean
@@ -254,33 +263,34 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
     GstVideoFrame * video)
 {
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
+
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
+
   guint x = 0, y = 0, x_ptr = 0, index = 0;
-  guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
-  guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
+  guint video_width = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
+  guint video_height = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
   gfloat fr, fi;
   GstMapInfo amap;
   guint32 *vdata;
   guint32 off = 0;
   gint channels;
-
-  static guint fft_array[SPECTROGRAM_WIDTH][SPECTROGRAM_HIGHT];
   static guint32 collumn_pointer = 0;
 
-  gst_buffer_map (audio, &amap, GST_MAP_READ);
+  // Map the video data
   vdata = (guint32 *) GST_VIDEO_FRAME_PLANE_DATA (video, 0);
 
-  channels = GST_AUDIO_INFO_CHANNELS (&bscope->ainfo);
-
+  // Map the audio data
+  gst_buffer_map (audio, &amap, GST_MAP_READ);
   mono_adata = (gint16 *) g_memdup (amap.data, amap.size);
 
+  // If multiple channels, deinterleave and mixdown adata
+  channels = GST_AUDIO_INFO_CHANNELS (&bscope->ainfo);
   if (channels > 1) {
     guint ch = channels;
     guint num_samples = amap.size / (ch * sizeof (gint16));
     guint i, c, v, s = 0;
 
-    /* deinterleave and mixdown adata */
     for (i = 0; i < num_samples; i++) {
       v = 0;
       for (c = 0; c < ch; c++) {
@@ -289,37 +299,39 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
       mono_adata[i] = v / ch;
     }
   }
-
-  /* run fft */
+  // Run fft
   gst_fft_s16_window (scope->fft_ctx, mono_adata, GST_FFT_WINDOW_HAMMING);
   gst_fft_s16_fft (scope->fft_ctx, mono_adata, fdata);
   g_free (mono_adata);
 
+  // Increment the pointer to the most resent collumn in the spectrogram
   collumn_pointer++;
-  if (collumn_pointer == w) {
+  if (collumn_pointer == video_width) {
     collumn_pointer = 0;
   }
-
-  /* for each pixel in the current fft line, calculate fft height and push to array */
-  for (y = 0; y < h; y++) {
+  // For each bin in the fft calculate intensity and push to fft_array
+  for (y = 0; y < video_height; y++) {
     fr = (gfloat) fdata[1 + y].r / 512.0;
     fi = (gfloat) fdata[1 + y].i / 512.0;
-    index = (y * w) + collumn_pointer;
-    scope->fft_array_info.data[index] = (guint) (h * sqrt (fr * fr + fi * fi));
+    index = (y * video_width) + collumn_pointer;
+    scope->fft_array_info.data[index] =
+        (guint) (video_height * sqrt (fr * fr + fi * fi));
   }
 
-  /* draw array */
-  for (x = 0; x < w; x++) {
-    x_ptr = (collumn_pointer + x + 1) % w;
-    for (y = 0; y < h; y++) {
-      off = ((h - y - 1) * w) + x;
-      index = (y * w) + x_ptr;
+  // For each bin in the spectrogram update the corresponding pixel in vdata
+  for (x = 0; x < video_width; x++) {
+    x_ptr = (collumn_pointer + x + 1) % video_width;
+    for (y = 0; y < video_height; y++) {
+      off = ((video_height - y - 1) * video_width) + x;
+      index = (y * video_width) + x_ptr;
       vdata[off] =
           (*scope->colormap_function) (scope->fft_array_info.data[index]);
     }
   }
 
+  // Unmap the audio data
   gst_buffer_unmap (audio, &amap);
+
   return TRUE;
 }
 
@@ -334,10 +346,10 @@ gst_spectrogram_scope_set_property (GObject * object, guint prop_id,
       scope->colormap = g_value_get_enum (value);
       switch (scope->colormap) {
         case COLORMAP_GREY:
-          scope->colormap_function = gst_spectrogram_scope_greymap;
+          scope->colormap_function = (void *) gst_spectrogram_scope_greymap;
           break;
         case COLORMAP_GOLD:
-          scope->colormap_function = gst_spectrogram_scope_colormap;
+          scope->colormap_function = (void *) gst_spectrogram_scope_colormap;
           break;
       }
       break;

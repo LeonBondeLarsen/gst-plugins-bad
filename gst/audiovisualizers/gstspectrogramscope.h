@@ -26,9 +26,6 @@
 #include <gst/fft/gstffts16.h>
 #include <stdio.h>
 
-#define SPECTROGRAM_WIDTH 320
-#define SPECTROGRAM_HIGHT 200
-
 G_BEGIN_DECLS
 #define GST_TYPE_SPECTROGRAM_SCOPE            (gst_spectrogram_scope_get_type())
 #define GST_SPECTROGRAM_SCOPE(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_SPECTROGRAM_SCOPE,GstSpectrogramScope))
