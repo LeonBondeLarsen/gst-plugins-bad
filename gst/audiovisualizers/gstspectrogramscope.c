@@ -147,7 +147,6 @@ gst_spectrogram_scope_class_init (GstSpectrogramScopeClass * g_class)
 static void
 gst_spectrogram_scope_init (GstSpectrogramScope * scope)
 {
-  /* do nothing */
 }
 
 static void
@@ -171,7 +170,7 @@ static gboolean
 gst_spectrogram_scope_setup (GstAudioVisualizer * bscope)
 {
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
-  guint num_freq = GST_VIDEO_INFO_WIDTH (&bscope->vinfo) + 1;
+  guint num_freq = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) + 1;
 
   if (scope->fft_ctx)
     gst_fft_s16_free (scope->fft_ctx);
@@ -181,6 +180,15 @@ gst_spectrogram_scope_setup (GstAudioVisualizer * bscope)
   bscope->req_spf = num_freq * 2 - 2;
   scope->fft_ctx = gst_fft_s16_new (bscope->req_spf, FALSE);
   scope->freq_data = g_new (GstFFTS16Complex, num_freq);
+
+  guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
+  guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
+
+  printf ("Setting size to %d x %d\n", w, h);
+  scope->fft_array = gst_allocator_alloc (NULL, w * h, NULL);
+
+  gst_memory_map (scope->fft_array, &scope->fft_array_info,
+      GST_MAP_READ | GST_MAP_WRITE);
 
   return TRUE;
 }
@@ -206,31 +214,36 @@ gst_spectrogram_scope_colormap (gint color)
   if (normalised_input > 1)
     normalised_input = 1;
 
-  gfloat a = normalised_input / 0.33;
+  gfloat a = normalised_input / 0.25;
   gfloat group = floor (a);
   gfloat Y = floor (255 * (a - group));
 
   switch ((gint) group) {
-    case 0:
+    case 0:                    //black to yellow
       r = Y;
       g = Y;
       b = 0;
-      break;                    //black to yellow
-    case 1:
+      break;
+    case 1:                    //yellow to red
       r = 255;
       g = 255 - Y;
+      b = 0;
+      break;
+    case 2:                    //red to magenta
+      r = 255;
+      g = 0;
       b = Y;
-      break;                    //yellow to magenta
-    case 2:
-      r = 255 - Y;
+      break;
+    case 3:                    //magenta to white
+      r = 255;
       g = Y;
       b = 255;
-      break;                    //magenta to cyan
-    case 3:
-      r = Y;
+      break;
+    default:
+      r = 255;
       g = 255;
       b = 255;
-      break;                    //cyan to white
+      break;
   }
 
   return (r << 16) | (g << 8) | b;
@@ -243,7 +256,7 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   GstSpectrogramScope *scope = GST_SPECTROGRAM_SCOPE (bscope);
   gint16 *mono_adata;
   GstFFTS16Complex *fdata = scope->freq_data;
-  guint x = 0, y = 0, x_ptr = 0;
+  guint x = 0, y = 0, x_ptr = 0, index = 0;
   guint w = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint h = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
   gfloat fr, fi;
@@ -283,7 +296,7 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   g_free (mono_adata);
 
   collumn_pointer++;
-  if (collumn_pointer == SPECTROGRAM_WIDTH) {
+  if (collumn_pointer == w) {
     collumn_pointer = 0;
   }
 
@@ -291,7 +304,8 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   for (y = 0; y < h; y++) {
     fr = (gfloat) fdata[1 + y].r / 512.0;
     fi = (gfloat) fdata[1 + y].i / 512.0;
-    fft_array[collumn_pointer][y] = (guint) (h * sqrt (fr * fr + fi * fi));
+    index = (y * w) + collumn_pointer;
+    scope->fft_array_info.data[index] = (guint) (h * sqrt (fr * fr + fi * fi));
   }
 
   /* draw array */
@@ -299,7 +313,9 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
     x_ptr = (collumn_pointer + x + 1) % w;
     for (y = 0; y < h; y++) {
       off = ((h - y - 1) * w) + x;
-      vdata[off] = (*scope->colormap_function) (fft_array[x_ptr][y]);
+      index = (y * w) + x_ptr;
+      vdata[off] =
+          (*scope->colormap_function) (scope->fft_array_info.data[index]);
     }
   }
 

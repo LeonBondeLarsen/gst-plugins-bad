@@ -47,6 +47,9 @@ struct _GstSpectrogramScope
 
   gint colormap;
   gint32 (*colormap_function)(guint);
+
+  GstMemory* fft_array;
+  GstMapInfo fft_array_info;
 };
 
 struct _GstSpectrogramScopeClass
