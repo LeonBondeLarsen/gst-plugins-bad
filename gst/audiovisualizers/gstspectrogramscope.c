@@ -71,6 +71,7 @@ static gboolean gst_spectrogram_scope_render (GstAudioVisualizer * scope,
     GstBuffer * audio, GstVideoFrame * video);
 static gint32 gst_spectrogram_scope_greymap (gint);
 static gint32 gst_spectrogram_scope_colormap (gint);
+static gfloat cosine_similarity (guint8 * A, guint8 * B, guint32 size);
 
 // Gstreamer declarations
 #define GST_TYPE_SPECTROGRAM_SCOPE_STYLE (gst_spectrogram_scope_colormap_get_type ())
@@ -178,8 +179,6 @@ gst_spectrogram_scope_setup (GstAudioVisualizer * bscope)
   video_width = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   video_height = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo);
 
-  //guint num_freq = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) + 1;
-
   // Calculate number of samples needed per render() call
   bscope->req_spf = video_height * 2 - 2;
 
@@ -196,6 +195,18 @@ gst_spectrogram_scope_setup (GstAudioVisualizer * bscope)
       gst_allocator_alloc (NULL, video_width * video_height, NULL);
   gst_memory_map (scope->fft_array, &scope->fft_array_info,
       GST_MAP_READ | GST_MAP_WRITE);
+
+  // Allocate memory for holding the power data
+  scope->power_value_array = malloc (video_width * sizeof (guint32));
+
+  // Allocate memory for holding the similarity scores
+  scope->similarity_scores = malloc (video_width * sizeof (gfloat));
+
+  // Set initial value for power max
+  scope->power_max = 8000;
+
+  // Set initial state for event generation
+  scope->above_threshold = FALSE;
 
   return TRUE;
 }
@@ -258,6 +269,22 @@ gst_spectrogram_scope_colormap (gint color)
   return (red << 16) | (green << 8) | blue;
 }
 
+static gfloat
+cosine_similarity (guint8 * A, guint8 * B, guint32 size)
+{
+  gfloat sum_ab = 0.0;
+  gfloat sum_a_squared = 0.0;
+  gfloat sum_b_squared = 0.0;
+  guint32 i = 0;
+
+  for (i = 0; i < size; ++i) {
+    sum_ab += A[i] * B[i];
+    sum_a_squared += A[i] * A[i];
+    sum_b_squared += B[i] * B[i];
+  }
+  return sum_ab / sqrt (sum_a_squared * sum_b_squared);
+}
+
 static gboolean
 gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
     GstVideoFrame * video)
@@ -270,12 +297,30 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
   guint x = 0, y = 0, x_ptr = 0, index = 0;
   guint video_width = GST_VIDEO_INFO_WIDTH (&bscope->vinfo);
   guint video_height = GST_VIDEO_INFO_HEIGHT (&bscope->vinfo) - 1;
-  gfloat fr, fi;
+  gfloat fr, fi, power, fft_intensity;
   GstMapInfo amap;
   guint32 *vdata;
   guint32 off = 0;
+  gfloat similarity = 0;
   gint channels;
   static guint32 collumn_pointer = 0;
+  static guint8 template[320] =
+      { 72, 23, 26, 55, 48, 36, 81, 172, 174, 88, 58, 59, 104, 118, 108, 98, 64,
+    56, 44, 40, 49, 63, 50, 28, 23, 25, 44, 48, 42, 38, 54, 64, 34, 25, 33,
+    64, 84, 53, 38, 43, 58, 44, 40, 47, 48, 44, 27, 30, 42, 44, 49, 39, 27,
+    19, 19, 17, 16, 14, 16, 13, 15, 16, 14, 11, 10, 10, 9, 10, 9, 9, 8, 9,
+    11, 12, 14, 17, 11, 9, 10, 13, 14, 14, 10, 10, 10, 14, 17, 11, 8, 9, 9,
+    6, 6, 7, 7, 9, 7, 6, 6, 5, 7, 8, 7, 9, 14, 13, 8, 7, 5, 4, 6, 4, 3, 4,
+    4, 3, 4, 5, 6, 5, 4, 3, 4, 5, 4, 4, 5, 4, 4, 5, 5, 5, 5, 4, 6, 5, 4, 5,
+    8, 11, 12, 7, 7, 6, 5, 4, 5, 5, 5, 4, 4, 4, 4, 4, 5, 3, 4, 3, 3, 4, 4,
+    4, 5, 5, 4, 3, 3, 3, 3, 3, 4, 3, 3, 3, 4, 5, 8, 7, 6, 5, 5, 3, 4, 5, 5,
+    5, 3, 4, 3, 3, 3, 3, 2, 3, 2, 2, 3, 2, 1, 0, 61, 0, 0, 24, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0
+  };
 
   // Map the video data
   vdata = (guint32 *) GST_VIDEO_FRAME_PLANE_DATA (video, 0);
@@ -310,14 +355,68 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
     collumn_pointer = 0;
   }
   // For each bin in the fft calculate intensity and push to fft_array
+  scope->power_in_collumn = 0;
   for (y = 0; y < video_height; y++) {
     fr = (gfloat) fdata[1 + y].r / 512.0;
     fi = (gfloat) fdata[1 + y].i / 512.0;
     index = (y * video_width) + collumn_pointer;
-    scope->fft_array_info.data[index] =
-        (guint) (video_height * sqrt (fr * fr + fi * fi));
+    fft_intensity = (guint) (video_height * sqrt (fr * fr + fi * fi));
+    scope->fft_array_info.data[index] = fft_intensity;
+
+    // Calculate power between 1 and 20 kHz
+    if (y > (video_height / 48.0) && y < (video_height * 20) / 48.0) {
+      scope->power_in_collumn += fft_intensity;
+    }
   }
 
+  // Save power
+  scope->power_value_array[collumn_pointer] = scope->power_in_collumn;
+
+  // Emit event if necessary
+  if (scope->above_threshold) {
+    if (scope->power_value_array[collumn_pointer] < (scope->power_max / 16)) {
+      printf ("%d Offset event\n", scope->event_counter);
+      scope->above_threshold = FALSE;
+    }
+  } else {
+    if (scope->power_value_array[collumn_pointer] > (scope->power_max / 16)) {
+      scope->event_counter++;
+      printf ("%d Onset event\n", scope->event_counter);
+      scope->above_threshold = TRUE;
+    }
+  }
+
+  // print power spectrum
+  /*»
+     if (scope->power_in_collumn > (scope->power_max / 16)) {
+     for(y = 0; y < video_width; y++)
+     {
+     index = (y * video_width) + collumn_pointer;
+     signature_sum[y] += scope->fft_array_info.data[index];
+     if (signature_count % 10 ) {
+     printf("%d,", (guint32)(signature_sum[y]/10.0));
+     }
+     }
+     if (signature_count % 10) {
+     printf("\n");
+     }
+     signature_count++;
+     }
+   */
+
+  // compare power spectrum to template
+  if (scope->power_in_collumn > (scope->power_max / 16)) {
+    scope->similarity_scores[collumn_pointer] =
+        cosine_similarity (scope->fft_array_info.data, template, video_width);
+  } else {
+    scope->similarity_scores[collumn_pointer] = 0;
+  }
+
+  // Update max value
+  if (scope->power_in_collumn > scope->power_max) {
+    scope->power_max = scope->power_in_collumn;
+    printf ("Power max: %f\n", scope->power_max);
+  }
   // For each bin in the spectrogram update the corresponding pixel in vdata
   for (x = 0; x < video_width; x++) {
     x_ptr = (collumn_pointer + x + 1) % video_width;
@@ -326,6 +425,37 @@ gst_spectrogram_scope_render (GstAudioVisualizer * bscope, GstBuffer * audio,
       index = (y * video_width) + x_ptr;
       vdata[off] =
           (*scope->colormap_function) (scope->fft_array_info.data[index]);
+
+      // Plot power
+      power =
+          (((gfloat) scope->power_value_array[x_ptr]) * video_height) /
+          scope->power_max;
+      if (power >= video_height) {
+        power = video_height - 1;
+      }
+      if (power < 0) {
+        power = 0;
+      }
+      off = ((video_height - (guint32) power - 1) * (video_width)) + x;
+      vdata[off] = 0x00FF0000;
+
+      if (scope->power_value_array[x_ptr] > (scope->power_max / 16)) {
+        vdata[x] = 0x00FF00FF;
+      }
+      // Plot similarity score
+      similarity = (scope->similarity_scores[x_ptr] * (video_height - 1));
+      if (similarity >= video_height) {
+        similarity = video_height - 1;
+      }
+      if (similarity < 0) {
+        similarity = 0;
+      }
+      off = ((video_height - (guint32) similarity - 1) * (video_width)) + x;
+      vdata[off] = 0x0000FF00;
+
+      if (similarity > 0.85) {
+        vdata[(video_width * 2) + x] = 0x00FFFFFF;
+      }
     }
   }
 

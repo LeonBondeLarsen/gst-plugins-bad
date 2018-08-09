@@ -47,6 +47,15 @@ struct _GstSpectrogramScope
 
   GstMemory* fft_array;
   GstMapInfo fft_array_info;
+
+  gfloat power_max;
+  gfloat power_in_collumn;
+  guint32* power_value_array;
+  gfloat* similarity_scores;
+
+  gboolean above_threshold;
+  guint32 hysteresis_time;
+  guint32 event_counter;
 };
 
 struct _GstSpectrogramScopeClass
