@@ -1,7 +1,7 @@
 /* GStreamer SRT plugin based on libsrt
  * Copyright (C) 2017, Collabora Ltd.
  *   Author:Justin Kim <justin.kim@collabora.com>
- * 
+ *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
  * License as published by the Free Software Foundation; either
@@ -106,13 +106,13 @@ gst_srt_client_sink_get_property (GObject * object,
       g_value_set_int (value, priv->poll_timeout);
       break;
     case PROP_BIND_PORT:
-      g_value_set_int (value, priv->rendez_vous);
+      g_value_set_int (value, priv->bind_port);
       break;
     case PROP_BIND_ADDRESS:
       g_value_set_string (value, priv->bind_address);
       break;
     case PROP_RENDEZ_VOUS:
-      g_value_set_boolean (value, priv->bind_port);
+      g_value_set_boolean (value, priv->rendez_vous);
       break;
     case PROP_STATS:
       g_value_take_boxed (value, gst_srt_base_sink_get_stats (priv->sockaddr,
@@ -151,6 +151,17 @@ gst_srt_client_sink_set_property (GObject * object,
   }
 }
 
+static void
+gst_srt_client_sink_finalize (GObject * object)
+{
+  GstSRTClientSink *self = GST_SRT_CLIENT_SINK (object);
+  GstSRTClientSinkPrivate *priv = GST_SRT_CLIENT_SINK_GET_PRIVATE (self);
+
+  g_free (priv->bind_address);
+
+  G_OBJECT_CLASS (parent_class)->finalize (object);
+}
+
 static gboolean
 gst_srt_client_sink_start (GstBaseSink * sink)
 {
@@ -159,7 +170,7 @@ gst_srt_client_sink_start (GstBaseSink * sink)
   GstSRTBaseSink *base = GST_SRT_BASE_SINK (sink);
   GstUri *uri = gst_uri_ref (GST_SRT_BASE_SINK (self)->uri);
 
-  priv->sock = gst_srt_client_connect_full (GST_ELEMENT (sink), FALSE,
+  priv->sock = gst_srt_client_connect (GST_ELEMENT (sink), TRUE,
       gst_uri_get_host (uri), gst_uri_get_port (uri), priv->rendez_vous,
       priv->bind_address, priv->bind_port, base->latency,
       &priv->sockaddr, &priv->poll_id, base->passphrase, base->key_length);
@@ -239,6 +250,7 @@ gst_srt_client_sink_class_init (GstSRTClientSinkClass * klass)
 
   gobject_class->set_property = gst_srt_client_sink_set_property;
   gobject_class->get_property = gst_srt_client_sink_get_property;
+  gobject_class->finalize = gst_srt_client_sink_finalize;
 
   properties[PROP_POLL_TIMEOUT] =
       g_param_spec_int ("poll-timeout", "Poll Timeout",

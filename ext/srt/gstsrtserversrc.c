@@ -1,7 +1,7 @@
 /* GStreamer SRT plugin based on libsrt
  * Copyright (C) 2017, Collabora Ltd.
  *   Author:Justin Kim <justin.kim@collabora.com>
- * 
+ *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
  * License as published by the Free Software Foundation; either
@@ -30,9 +30,9 @@
  * <title>Examples</title>
  * |[
  * gst-launch-1.0 -v srtserversrc uri="srt://:7001" ! fakesink
- * ]| This pipeline shows how to bind SRT server by setting #GstSRTServerSrc:uri property. 
+ * ]| This pipeline shows how to bind SRT server by setting #GstSRTServerSrc:uri property.
  * </refsect2>
- * 
+ *
  */
 
 #ifdef HAVE_CONFIG_H
@@ -163,10 +163,6 @@ gst_srt_server_src_fill (GstPushSrc * src, GstBuffer * outbuf)
   while (!priv->has_client) {
     GST_DEBUG_OBJECT (self, "poll wait (timeout: %d)", priv->poll_timeout);
 
-    /* Make SRT server socket non-blocking */
-    srt_setsockopt (priv->sock, 0, SRTO_SNDSYN, &(int) {
-        0}, sizeof (int));
-
     if (srt_epoll_wait (priv->poll_id, ready, &(int) {
             2}, 0, 0, priv->poll_timeout, 0, 0, 0, 0) == -1) {
       int srt_errno = srt_getlasterror (NULL);
@@ -239,20 +235,10 @@ gst_srt_server_src_fill (GstPushSrc * src, GstBuffer * outbuf)
     goto out;
   }
 
-  GST_BUFFER_PTS (outbuf) =
-      gst_clock_get_time (GST_ELEMENT_CLOCK (src)) -
-      GST_ELEMENT_CAST (src)->base_time;
-
   gst_buffer_resize (outbuf, 0, recv_len);
 
-  GST_LOG_OBJECT (src,
-      "filled buffer from _get of size %" G_GSIZE_FORMAT ", ts %"
-      GST_TIME_FORMAT ", dur %" GST_TIME_FORMAT
-      ", offset %" G_GINT64_FORMAT ", offset_end %" G_GINT64_FORMAT,
-      gst_buffer_get_size (outbuf),
-      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (outbuf)),
-      GST_TIME_ARGS (GST_BUFFER_DURATION (outbuf)),
-      GST_BUFFER_OFFSET (outbuf), GST_BUFFER_OFFSET_END (outbuf));
+  GST_LOG_OBJECT (src, "filled buffer from _get of size %" G_GSIZE_FORMAT,
+      gst_buffer_get_size (outbuf));
 
 out:
   return ret;
@@ -265,12 +251,7 @@ gst_srt_server_src_start (GstBaseSrc * src)
   GstSRTServerSrcPrivate *priv = GST_SRT_SERVER_SRC_GET_PRIVATE (self);
   GstSRTBaseSrc *base = GST_SRT_BASE_SRC (src);
   GstUri *uri = gst_uri_ref (base->uri);
-  GError *error = NULL;
-  struct sockaddr sa;
-  size_t sa_len;
-  GSocketAddress *socket_address;
   const gchar *host;
-  int lat = base->latency;
 
   if (gst_uri_get_port (uri) == GST_URI_NO_PORT) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_WRITE, NULL, (("Invalid port")));
@@ -278,80 +259,17 @@ gst_srt_server_src_start (GstBaseSrc * src)
   }
 
   host = gst_uri_get_host (uri);
-  if (host == NULL) {
-    GInetAddress *any = g_inet_address_new_any (G_SOCKET_FAMILY_IPV4);
 
-    socket_address = g_inet_socket_address_new (any, gst_uri_get_port (uri));
-    g_object_unref (any);
-  } else {
-    socket_address =
-        g_inet_socket_address_new_from_string (host, gst_uri_get_port (uri));
-  }
+  priv->sock = gst_srt_server_listen (GST_ELEMENT (self),
+      FALSE, host, gst_uri_get_port (uri),
+      base->latency, &priv->poll_id, base->passphrase, base->key_length);
 
-  if (socket_address == NULL) {
-    GST_ELEMENT_ERROR (self, RESOURCE, OPEN_READ, ("Invalid URI"),
-        ("failed to extract host or port from the given URI"));
-    goto failed;
-  }
-
-  sa_len = g_socket_address_get_native_size (socket_address);
-  if (!g_socket_address_to_native (socket_address, &sa, sa_len, &error)) {
-    GST_ELEMENT_ERROR (self, RESOURCE, OPEN_READ, ("Invalid URI"),
-        ("cannot resolve address (reason: %s)", error->message));
-    goto failed;
-  }
-
-  priv->sock = srt_socket (sa.sa_family, SOCK_DGRAM, 0);
-  if (priv->sock == SRT_ERROR) {
-    GST_ELEMENT_ERROR (self, LIBRARY, INIT, (NULL),
-        ("failed to create poll id for SRT socket (reason: %s)",
-            srt_getlasterror_str ()));
-    goto failed;
-  }
-
-  /* Make sure TSBPD mode is enable (SRT mode) */
-  srt_setsockopt (priv->sock, 0, SRTO_TSBPDMODE, &(int) {
-      1}, sizeof (int));
-
-  /* This is a sink, we're always a receiver */
-  srt_setsockopt (priv->sock, 0, SRTO_SENDER, &(int) {
-      0}, sizeof (int));
-
-  srt_setsockopt (priv->sock, 0, SRTO_TSBPDDELAY, &lat, sizeof (int));
-
-  if (base->passphrase != NULL && base->passphrase[0] != '\0') {
-    srt_setsockopt (priv->sock, 0, SRTO_PASSPHRASE,
-        base->passphrase, strlen (base->passphrase));
-    srt_setsockopt (priv->sock, 0, SRTO_PBKEYLEN,
-        &base->key_length, sizeof (int));
-  }
-
-  priv->poll_id = srt_epoll_create ();
-  if (priv->poll_id == -1) {
-    GST_ELEMENT_ERROR (self, LIBRARY, INIT, (NULL),
-        ("failed to create poll id for SRT socket (reason: %s)",
-            srt_getlasterror_str ()));
-    goto failed;
-  }
-
-  srt_epoll_add_usock (priv->poll_id, priv->sock, &(int) {
-      SRT_EPOLL_IN});
-
-  if (srt_bind (priv->sock, &sa, sa_len) == SRT_ERROR) {
-    GST_ELEMENT_ERROR (self, RESOURCE, OPEN_READ, (NULL),
-        ("failed to bind SRT server socket (reason: %s)",
-            srt_getlasterror_str ()));
-    goto failed;
-  }
-
-  if (srt_listen (priv->sock, 1) == SRT_ERROR) {
-    GST_ELEMENT_ERROR (self, RESOURCE, OPEN_READ, (NULL),
-        ("failed to listen SRT socket (reason: %s)", srt_getlasterror_str ()));
+  if (priv->sock == SRT_INVALID_SOCK) {
+    GST_ERROR_OBJECT (src, "Failed to create srt socket");
     goto failed;
   }
 
   g_clear_pointer (&uri, gst_uri_unref);
-  g_clear_object (&socket_address);
 
   return TRUE;
 
@@ -366,9 +284,7 @@ failed:
     priv->sock = SRT_ERROR;
   }
 
-  g_clear_error (&error);
   g_clear_pointer (&uri, gst_uri_unref);
-  g_clear_object (&socket_address);
 
   return FALSE;
 }
@@ -380,7 +296,7 @@ gst_srt_server_src_stop (GstBaseSrc * src)
   GstSRTServerSrcPrivate *priv = GST_SRT_SERVER_SRC_GET_PRIVATE (self);
 
   if (priv->client_sock != SRT_INVALID_SOCK) {
-    g_signal_emit (self, signals[SIG_CLIENT_ADDED], 0,
+    g_signal_emit (self, signals[SIG_CLIENT_CLOSED], 0,
         priv->client_sock, priv->client_sockaddr);
     srt_close (priv->client_sock);
     g_clear_object (&priv->client_sockaddr);
@@ -441,7 +357,7 @@ gst_srt_server_src_class_init (GstSRTServerSrcClass * klass)
 
   /**
    * GstSRTServerSrc:poll-timeout:
-   * 
+   *
    * The timeout(ms) value when polling SRT socket. For #GstSRTServerSrc,
    * this value shouldn't be set as -1 (infinite) because "srt_epoll_wait"
    * isn't cancellable unless closing the socket.
@@ -459,7 +375,7 @@ gst_srt_server_src_class_init (GstSRTServerSrcClass * klass)
    * @sock: the client socket descriptor that was added to srtserversrc
    * @addr: the pointer of "struct sockaddr" that describes the @sock
    * @addr_len: the length of @addr
-   * 
+   *
    * The given socket descriptor was added to srtserversrc.
    */
   signals[SIG_CLIENT_ADDED] =

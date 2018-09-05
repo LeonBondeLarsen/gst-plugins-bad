@@ -1,7 +1,7 @@
 /* GStreamer SRT plugin based on libsrt
  * Copyright (C) 2017, Collabora Ltd.
  *   Author:Justin Kim <justin.kim@collabora.com>
- * 
+ *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
  * License as published by the Free Software Foundation; either
@@ -103,13 +103,13 @@ gst_srt_client_src_get_property (GObject * object,
       g_value_set_int (value, priv->poll_timeout);
       break;
     case PROP_BIND_PORT:
-      g_value_set_int (value, priv->rendez_vous);
+      g_value_set_int (value, priv->bind_port);
       break;
     case PROP_BIND_ADDRESS:
       g_value_set_string (value, priv->bind_address);
       break;
     case PROP_RENDEZ_VOUS:
-      g_value_set_boolean (value, priv->bind_port);
+      g_value_set_boolean (value, priv->rendez_vous);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -175,8 +175,8 @@ gst_srt_client_src_fill (GstPushSrc * src, GstBuffer * outbuf)
   SRTSOCKET ready[2];
   gint recv_len;
 
-  if (srt_epoll_wait (priv->poll_id, 0, 0, ready, &(int) {
-          2}, priv->poll_timeout, 0, 0, 0, 0) == -1) {
+  if (srt_epoll_wait (priv->poll_id, ready, &(int) {
+          2}, 0, 0, priv->poll_timeout, 0, 0, 0, 0) == -1) {
 
     /* Assuming that timeout error is normal */
     if (srt_getlasterror (NULL) != SRT_ETIMEOUT) {
@@ -210,20 +210,10 @@ gst_srt_client_src_fill (GstPushSrc * src, GstBuffer * outbuf)
     goto out;
   }
 
-  GST_BUFFER_PTS (outbuf) =
-      gst_clock_get_time (GST_ELEMENT_CLOCK (src)) -
-      GST_ELEMENT_CAST (src)->base_time;
-
   gst_buffer_resize (outbuf, 0, recv_len);
 
-  GST_LOG_OBJECT (src,
-      "filled buffer from _get of size %" G_GSIZE_FORMAT ", ts %"
-      GST_TIME_FORMAT ", dur %" GST_TIME_FORMAT
-      ", offset %" G_GINT64_FORMAT ", offset_end %" G_GINT64_FORMAT,
-      gst_buffer_get_size (outbuf),
-      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (outbuf)),
-      GST_TIME_ARGS (GST_BUFFER_DURATION (outbuf)),
-      GST_BUFFER_OFFSET (outbuf), GST_BUFFER_OFFSET_END (outbuf));
+  GST_LOG_OBJECT (src, "filled buffer from _get of size %" G_GSIZE_FORMAT,
+      gst_buffer_get_size (outbuf));
 
 out:
   return ret;
@@ -238,7 +228,7 @@ gst_srt_client_src_start (GstBaseSrc * src)
   GstUri *uri = gst_uri_ref (base->uri);
   GSocketAddress *socket_address = NULL;
 
-  priv->sock = gst_srt_client_connect_full (GST_ELEMENT (src), FALSE,
+  priv->sock = gst_srt_client_connect (GST_ELEMENT (src), FALSE,
       gst_uri_get_host (uri), gst_uri_get_port (uri), priv->rendez_vous,
       priv->bind_address, priv->bind_port, base->latency,
       &socket_address, &priv->poll_id, base->passphrase, base->key_length);
@@ -284,8 +274,8 @@ gst_srt_client_src_class_init (GstSRTClientSrcClass * klass)
 
   /**
    * GstSRTClientSrc:poll-timeout:
-   * 
-   * The timeout(ms) value when polling SRT socket. 
+   *
+   * The timeout(ms) value when polling SRT socket.
    */
   properties[PROP_POLL_TIMEOUT] =
       g_param_spec_int ("poll-timeout", "Poll timeout",

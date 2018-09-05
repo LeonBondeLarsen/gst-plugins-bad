@@ -30,7 +30,8 @@ webrtc_enums = gnome.mkenums_simple('webrtc-enumtypes',
   header_prefix : '#include <gst/webrtc/webrtc_fwd.h>',
   decorator: 'GST_WEBRTC_API',
   install_header: true,
-  install_dir : 'include/gstreamer-1.0/gst/webrtc/')
+  install_dir : join_paths(get_option('includedir'), 'gstreamer-1.0/gst/webrtc/'))
+
 gstwebrtc_c = webrtc_enums[0]
 gstwebrtc_h = webrtc_enums[1]
 
@@ -44,6 +45,7 @@ gstwebrtc = library('gstwebrtc-' + api_version,
   include_directories : [configinc, libsinc],
   version : libversion,
   soversion : soversion,
+  darwin_versions : osxversion,
   install : true,
   dependencies : gstwebrtc_dependencies,
 )

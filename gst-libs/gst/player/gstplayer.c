@@ -492,7 +492,10 @@ gst_player_dispose (GObject * object)
   if (self->loop) {
     g_main_loop_quit (self->loop);
 
-    g_thread_join (self->thread);
+    if (self->thread != g_thread_self ())
+      g_thread_join (self->thread);
+    else
+      g_thread_unref (self->thread);
     self->thread = NULL;
 
     g_main_loop_unref (self->loop);
@@ -757,7 +760,7 @@ gst_player_get_property (GObject * object, guint prop_id,
           g_value_get_string (value));
       break;
     case PROP_POSITION:{
-      gint64 position = 0;
+      gint64 position = GST_CLOCK_TIME_NONE;
 
       gst_element_query_position (self->playbin, GST_FORMAT_TIME, &position);
       g_value_set_uint64 (value, position);
@@ -1499,7 +1502,8 @@ emit_duration_changed (GstPlayer * self, GstClockTime duration)
 {
   gboolean updated = FALSE;
 
-  g_return_if_fail (self->cached_duration != duration);
+  if (self->cached_duration == duration)
+    return;
 
   GST_DEBUG_OBJECT (self, "Duration changed %" GST_TIME_FORMAT,
       GST_TIME_ARGS (duration));
@@ -1695,7 +1699,7 @@ duration_changed_cb (G_GNUC_UNUSED GstBus * bus, G_GNUC_UNUSED GstMessage * msg,
     gpointer user_data)
 {
   GstPlayer *self = GST_PLAYER (user_data);
-  gint64 duration;
+  gint64 duration = GST_CLOCK_TIME_NONE;
 
   if (gst_element_query_duration (self->playbin, GST_FORMAT_TIME, &duration)) {
     emit_duration_changed (self, duration);

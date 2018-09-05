@@ -407,6 +407,7 @@ _vbi3_raw_decoder_dump (const vbi3_raw_decoder * rd, FILE * fp)
   }
 }
 
+#if 0                           /* @UNUSED */
 _vbi_inline int
 cpr1204_crc (const vbi_sliced * sliced)
 {
@@ -426,6 +427,7 @@ cpr1204_crc (const vbi_sliced * sliced)
 
   return crc;
 }
+#endif
 
 static vbi_bool
 slice (vbi3_raw_decoder * rd,
@@ -1008,7 +1010,8 @@ vbi3_raw_decoder_add_services (vbi3_raw_decoder * rd,
             par->cri_rate,
             cri_end,
             (par->cri_frc & ((1U << par->frc_bits) - 1)),
-            par->frc_bits, par->payload, par->bit_rate, par->modulation)) {
+            par->frc_bits, par->payload, par->bit_rate,
+            (vbi3_modulation) par->modulation)) {
       assert (!"bit_slicer_set_params");
     }
 

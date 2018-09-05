@@ -496,6 +496,11 @@ gst_ts_demux_get_duration (GstTSDemux * demux, GstClockTime * dur)
   gboolean res = FALSE;
   gint64 val;
 
+  if (!demux->program) {
+    GST_DEBUG_OBJECT (demux, "No active program yet, can't provide duration");
+    return FALSE;
+  }
+
   /* Get total size in bytes */
   if (gst_pad_peer_query_duration (base->sinkpad, GST_FORMAT_BYTES, &val)) {
     /* Convert it to duration */
@@ -2471,7 +2476,9 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream,
 
   if (!demux->segment_event) {
     demux->segment_event = gst_event_new_segment (&demux->segment);
-    GST_EVENT_SEQNUM (demux->segment_event) = base->last_seek_seqnum;
+
+    if (base->last_seek_seqnum != GST_SEQNUM_INVALID)
+      gst_event_set_seqnum (demux->segment_event, base->last_seek_seqnum);
   }
 
 push_new_segment:

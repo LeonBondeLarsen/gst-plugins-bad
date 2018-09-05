@@ -219,6 +219,7 @@ gst_webrtc_bin_pad_new (const gchar * name, GstPadDirection direction)
 
 #define gst_webrtc_bin_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstWebRTCBin, gst_webrtc_bin, GST_TYPE_BIN,
+    G_ADD_PRIVATE (GstWebRTCBin)
     GST_DEBUG_CATEGORY_INIT (gst_webrtc_bin_debug, "webrtcbin", 0,
         "webrtcbin element"););
 
@@ -1258,8 +1259,11 @@ _find_codec_preferences (GstWebRTCBin * webrtc, GstWebRTCRTPTransceiver * trans,
   } else {
     GstWebRTCBinPad *pad = _find_pad_for_mline (webrtc, direction, media_idx);
     if (pad) {
-      GstCaps *caps = gst_pad_get_current_caps (GST_PAD (pad));
-      if (caps) {
+      GstCaps *caps = NULL;
+
+      if (pad->received_caps) {
+        caps = gst_caps_ref (pad->received_caps);
+      } else if ((caps = gst_pad_get_current_caps (GST_PAD (pad)))) {
         GST_LOG_OBJECT (webrtc, "Using current pad caps: %" GST_PTR_FORMAT,
             caps);
       } else {
@@ -1505,6 +1509,7 @@ _pick_rtx_payload_types (GstWebRTCBin * webrtc, WebRTCTransceiver * trans,
     str = g_strdup_printf ("%u", target_ssrc);
     gst_structure_set (trans->local_rtx_ssrc_map, str, G_TYPE_UINT,
         g_random_int (), NULL);
+    g_free (str);
 
     str = g_strdup_printf ("%u", pt);
     gst_sdp_media_add_format (media, str);
@@ -1699,15 +1704,19 @@ sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
     gint clockrate = -1;
     gint rtx_target_pt;
     gint original_rtx_target_pt;        /* Workaround chrome bug: https://bugs.chromium.org/p/webrtc/issues/detail?id=6196 */
-    guint rtx_target_ssrc;
+    guint rtx_target_ssrc = -1;
 
     if (gst_structure_get_int (s, "payload", &rtx_target_pt))
       g_array_append_val (reserved_pts, rtx_target_pt);
 
     original_rtx_target_pt = rtx_target_pt;
 
-    gst_structure_get_int (s, "clock-rate", &clockrate);
-    gst_structure_get_uint (s, "ssrc", &rtx_target_ssrc);
+    if (!gst_structure_get_int (s, "clock-rate", &clockrate))
+      GST_WARNING_OBJECT (webrtc,
+          "Caps %" GST_PTR_FORMAT " are missing clock-rate", caps);
+    if (!gst_structure_get_uint (s, "ssrc", &rtx_target_ssrc))
+      GST_WARNING_OBJECT (webrtc, "Caps %" GST_PTR_FORMAT " are missing ssrc",
+          caps);
 
     _pick_fec_payload_types (webrtc, WEBRTC_TRANSCEIVER (trans), reserved_pts,
         clockrate, &rtx_target_pt, media);
@@ -2797,6 +2806,7 @@ _set_description_task (GstWebRTCBin * webrtc, struct set_description *sd)
 
   if (!validate_sdp (webrtc, sd->source, sd->sdp, &error)) {
     GST_ERROR_OBJECT (webrtc, "%s", error->message);
+    g_clear_error (&error);
     goto out;
   }
 
@@ -4016,6 +4026,9 @@ gst_webrtc_bin_finalize (GObject * object)
     gst_structure_free (webrtc->priv->stats);
   webrtc->priv->stats = NULL;
 
+  g_mutex_clear (PC_GET_LOCK (webrtc));
+  g_cond_clear (PC_GET_COND (webrtc));
+
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
@@ -4024,8 +4037,6 @@ gst_webrtc_bin_class_init (GstWebRTCBinClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
   GstElementClass *element_class = (GstElementClass *) klass;
-
-  g_type_class_add_private (klass, sizeof (GstWebRTCBinPrivate));
 
   element_class->request_new_pad = gst_webrtc_bin_request_new_pad;
   element_class->release_pad = gst_webrtc_bin_release_pad;
@@ -4334,9 +4345,9 @@ _transport_free (GObject ** object)
 static void
 gst_webrtc_bin_init (GstWebRTCBin * webrtc)
 {
-  webrtc->priv =
-      G_TYPE_INSTANCE_GET_PRIVATE ((webrtc), GST_TYPE_WEBRTC_BIN,
-      GstWebRTCBinPrivate);
+  webrtc->priv = gst_webrtc_bin_get_instance_private (webrtc);
+  g_mutex_init (PC_GET_LOCK (webrtc));
+  g_cond_init (PC_GET_COND (webrtc));
 
   _start_thread (webrtc);
 

@@ -224,6 +224,9 @@ gst_base_cea_cc_overlay_class_init (GstCeaCcOverlayClass * klass)
   gobject_class = (GObjectClass *) klass;
   gstelement_class = (GstElementClass *) klass;
 
+  GST_DEBUG_CATEGORY_INIT (gst_cea_cc_overlay_debug, "cc708overlay", 0,
+      "cc708overlay");
+
   parent_class = g_type_class_peek_parent (klass);
 
   gobject_class->finalize = gst_cea_cc_overlay_finalize;
@@ -1521,7 +1524,8 @@ gst_cea_cc_overlay_user_data_decode (GstCeaCcOverlay * overlay,
       case CCTYPE_608_CC2:
         if (cc_valid) {
           if (overlay->cea608_index[cc_type] <= DTVCC_LENGTH - 2) {
-            for (size_t j = 0; j < 2; ++j) {
+            size_t j;
+            for (j = 0; j < 2; ++j) {
               if ((cc_data[j] < ' ') || (cc_data[j] > '~')) {
                 gst_cea_cc_overlay_process_packet (overlay, cc_type);
               }

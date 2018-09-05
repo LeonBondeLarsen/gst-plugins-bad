@@ -1,7 +1,7 @@
 /* GStreamer
  * Copyright (C) 2017, Collabora Ltd.
  *   Author:Justin Kim <justin.kim@collabora.com>
- * 
+ *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
  * License as published by the Free Software Foundation; either
@@ -22,6 +22,7 @@
 #define __GST_SRT_SERVER_SRC_H__
 
 #include "gstsrtbasesrc.h"
+#include <gio/gio.h>
 #include <srt/srt.h>
 
 G_BEGIN_DECLS
@@ -49,8 +50,8 @@ struct _GstSRTServerSrc {
 struct _GstSRTServerSrcClass {
   GstSRTBaseSrcClass parent_class;
 
-  void (*client_added)      (GstSRTServerSrc *self, int sock, struct sockaddr *addr, int addr_len);
-  void (*client_closed)     (GstSRTServerSrc *self, int sock, struct sockaddr *addr, int addr_len);
+  void (*client_added)      (GstSRTServerSrc *self, int sock, GSocketAddress *addr);
+  void (*client_closed)     (GstSRTServerSrc *self, int sock, GSocketAddress *addr);
 
   gpointer _gst_reserved[GST_PADDING_LARGE];
 };

@@ -9,6 +9,7 @@ libparser = static_library('parser',
 libparser_dep = declare_dependency(link_with: libparser,
   sources: ['elements/parser.h'])
 
+# FIXME: automagic
 exif_dep = dependency('libexif', version : '>= 0.6.16', required : false)
 
 enable_gst_player_tests = get_option('gst_player_tests')
@@ -20,6 +21,7 @@ base_tests = [
   [['elements/assrender.c'], not ass_dep.found(), [ass_dep]],
   [['elements/autoconvert.c']],
   [['elements/autovideoconvert.c']],
+  [['elements/avwait.c']],
   [['elements/camerabin.c']],
   [['elements/compositor.c']],
   [['elements/curlhttpsink.c'], not curl_dep.found(), [curl_dep]],
@@ -63,6 +65,7 @@ base_tests = [
   [['libs/isoff.c'], not xml2_dep.found(), [gstisoff_dep, xml2_dep]],
   [['libs/mpegts.c'], false, [gstmpegts_dep]],
   [['libs/mpegvideoparser.c'], false, [gstcodecparsers_dep]],
+  [['libs/planaraudioadapter.c'], false, [gstbadaudio_dep]],
   [['libs/player.c'], not enable_gst_player_tests, [gstplayer_dep]],
   [['libs/vc1parser.c'], false, [gstcodecparsers_dep]],
   [['libs/vp8parser.c'], false, [gstcodecparsers_dep]],

@@ -38,7 +38,7 @@ GST_DEBUG_CATEGORY_STATIC (GST_CAT_DEFAULT);
 #define gst_webrtc_dtls_transport_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstWebRTCDTLSTransport, gst_webrtc_dtls_transport,
     GST_TYPE_OBJECT, GST_DEBUG_CATEGORY_INIT (gst_webrtc_dtls_transport_debug,
-        "dtlstransport", 0, "dtlstransport");
+        "webrtcdtlstransport", 0, "webrtcdtlstransport");
     );
 
 enum
@@ -84,8 +84,6 @@ gst_webrtc_dtls_transport_set_property (GObject * object, guint prop_id,
     case PROP_CLIENT:
       g_object_set_property (G_OBJECT (webrtc->dtlssrtpenc), "is-client",
           value);
-      gst_element_set_locked_state (webrtc->dtlssrtpenc, FALSE);
-      gst_element_sync_state_with_parent (webrtc->dtlssrtpenc);
       break;
     case PROP_CERTIFICATE:
       g_object_set_property (G_OBJECT (webrtc->dtlssrtpdec), "pem", value);

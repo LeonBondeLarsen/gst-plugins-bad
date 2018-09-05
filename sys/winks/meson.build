@@ -7,10 +7,16 @@ winks_sources = [
   'ksvideohelpers.c',
 ]
 
-if host_system == 'windows'
-  winks_dep = [cc.find_library('ksuser'), cc.find_library('uuid'),
-               cc.find_library('strmiids'), cc.find_library('dxguid'),
-               cc.find_library('setupapi'), cc.find_library('ole32')]
+winks_option = get_option('winks')
+if host_system == 'windows' and not winks_option.disabled()
+  # FIXME: Add a way to skip this library when these deps are not found. Not
+  # urgent because these are always available when building for Windows.
+  winks_dep = [cc.find_library('ksuser', required : winks_option),
+               cc.find_library('uuid', required : winks_option),
+               cc.find_library('strmiids', required : winks_option),
+               cc.find_library('dxguid', required : winks_option),
+               cc.find_library('setupapi', required : winks_option),
+               cc.find_library('ole32', required : winks_option)]
 
   gstwinks = library('gstwinks',
     winks_sources,

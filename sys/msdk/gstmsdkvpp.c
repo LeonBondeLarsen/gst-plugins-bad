@@ -769,7 +769,6 @@ gst_msdkvpp_close (GstMsdkVPP * thiz)
 static void
 ensure_filters (GstMsdkVPP * thiz)
 {
-  guint n_filters = 0;
 
   /* Denoise */
   if (thiz->flags & GST_MSDK_FLAG_DENOISE) {
@@ -778,8 +777,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_denoise->Header.BufferSz = sizeof (mfxExtVPPDenoise);
     mfx_denoise->DenoiseFactor = thiz->denoise_factor;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_denoise);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_DENOISE;
-    n_filters++;
   }
 
   /* Rotation */
@@ -789,8 +786,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_rotation->Header.BufferSz = sizeof (mfxExtVPPRotation);
     mfx_rotation->Angle = thiz->rotation;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_rotation);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_ROTATION;
-    n_filters++;
   }
 
   /* Deinterlace */
@@ -800,8 +795,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_deinterlace->Header.BufferSz = sizeof (mfxExtVPPDeinterlacing);
     mfx_deinterlace->Mode = thiz->deinterlace_method;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_deinterlace);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_DEINTERLACING;
-    n_filters++;
   }
 
   /* Colorbalance(ProcAmp) */
@@ -815,8 +808,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_procamp->Brightness = thiz->brightness;
     mfx_procamp->Contrast = thiz->contrast;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_procamp);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_PROCAMP;
-    n_filters++;
   }
 
   /* Detail/Edge enhancement */
@@ -826,18 +817,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_detail->Header.BufferSz = sizeof (mfxExtVPPDetail);
     mfx_detail->DetailFactor = thiz->detail;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_detail);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_DETAIL;
-    n_filters++;
-  }
-
-  /* mfxExtVPPDoUse */
-  if (n_filters) {
-    mfxExtVPPDoUse *mfx_vpp_douse = &thiz->mfx_vpp_douse;
-    mfx_vpp_douse->Header.BufferId = MFX_EXTBUFF_VPP_DOUSE;
-    mfx_vpp_douse->Header.BufferSz = sizeof (mfxExtVPPDoUse);
-    mfx_vpp_douse->NumAlg = n_filters;
-    mfx_vpp_douse->AlgList = thiz->max_filter_algorithms;
-    gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_vpp_douse);
   }
 
   /* Mirroring */
@@ -847,8 +826,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_mirroring->Header.BufferSz = sizeof (mfxExtVPPMirroring);
     mfx_mirroring->Type = thiz->mirroring;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_mirroring);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_MIRRORING;
-    n_filters++;
   }
 
   /* Scaling Mode */
@@ -858,8 +835,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_scaling->Header.BufferSz = sizeof (mfxExtVPPScaling);
     mfx_scaling->ScalingMode = thiz->scaling_mode;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_scaling);
-    thiz->max_filter_algorithms[n_filters] = MFX_EXTBUFF_VPP_SCALING;
-    n_filters++;
   }
 
   /* FRC */
@@ -869,9 +844,6 @@ ensure_filters (GstMsdkVPP * thiz)
     mfx_frc->Header.BufferSz = sizeof (mfxExtVPPFrameRateConversion);
     mfx_frc->Algorithm = thiz->frc_algm;
     gst_msdkvpp_add_extra_param (thiz, (mfxExtBuffer *) mfx_frc);
-    thiz->max_filter_algorithms[n_filters] =
-        MFX_EXTBUFF_VPP_FRAME_RATE_CONVERSION;
-    n_filters++;
   }
 }
 
@@ -901,9 +873,7 @@ gst_msdkvpp_set_passthrough (GstMsdkVPP * thiz)
       GST_VIDEO_INFO_FORMAT (&thiz->srcpad_info))
     passthrough = FALSE;
 
-  GST_OBJECT_UNLOCK (thiz);
   gst_base_transform_set_passthrough (GST_BASE_TRANSFORM (thiz), passthrough);
-  GST_OBJECT_LOCK (thiz);
 }
 
 static gboolean
@@ -959,6 +929,15 @@ gst_msdkvpp_initialize (GstMsdkVPP * thiz)
   if (thiz->flags & GST_MSDK_FLAG_DEINTERLACE)
     thiz->param.vpp.Out.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
 
+  /* Enable the required filters */
+  ensure_filters (thiz);
+
+  /* Add exteneded buffers */
+  if (thiz->num_extra_params) {
+    thiz->param.NumExtParam = thiz->num_extra_params;
+    thiz->param.ExtParam = thiz->extra_params;
+  }
+
   /* validate parameters and allow the Media SDK to make adjustments */
   status = MFXVideoVPP_Query (session, &thiz->param, &thiz->param);
   if (status < MFX_ERR_NONE) {
@@ -968,18 +947,6 @@ gst_msdkvpp_initialize (GstMsdkVPP * thiz)
   } else if (status > MFX_ERR_NONE) {
     GST_WARNING_OBJECT (thiz, "Video VPP Query returned: %s",
         msdk_status_to_string (status));
-  }
-
-  /* Enable the required filters */
-  ensure_filters (thiz);
-
-  /* set passthrough according to filter operation change */
-  gst_msdkvpp_set_passthrough (thiz);
-
-  /* Add exteneded buffers */
-  if (thiz->num_extra_params) {
-    thiz->param.NumExtParam = thiz->num_extra_params;
-    thiz->param.ExtParam = thiz->extra_params;
   }
 
   status = MFXVideoVPP_QueryIOSurf (session, &thiz->param, request);
@@ -1019,6 +986,7 @@ gst_msdkvpp_initialize (GstMsdkVPP * thiz)
         msdk_status_to_string (status));
   }
 
+  thiz->initialized = TRUE;
   GST_OBJECT_UNLOCK (thiz);
   return TRUE;
 
@@ -1058,7 +1026,7 @@ gst_msdkvpp_set_caps (GstBaseTransform * trans, GstCaps * caps,
   thiz->use_video_memory = FALSE;
 #endif
 
-  if (!sinkpad_info_changed && !srcpad_info_changed)
+  if (!sinkpad_info_changed && !srcpad_info_changed && thiz->initialized)
     return TRUE;
 
   /* check for deinterlace requirement */
@@ -1072,6 +1040,9 @@ gst_msdkvpp_set_caps (GstBaseTransform * trans, GstCaps * caps,
 
   if (!gst_msdkvpp_initialize (thiz))
     return FALSE;
+
+  /* set passthrough according to filter operation change */
+  gst_msdkvpp_set_passthrough (thiz);
 
   /* Ensure sinkpad buffer pool */
   thiz->sinkpad_buffer_pool =
@@ -1480,6 +1451,7 @@ gst_msdkvpp_class_init (GstMsdkVPPClass * klass)
 static void
 gst_msdkvpp_init (GstMsdkVPP * thiz)
 {
+  thiz->initialized = FALSE;
   thiz->hardware = PROP_HARDWARE_DEFAULT;
   thiz->async_depth = PROP_ASYNC_DEPTH_DEFAULT;
   thiz->denoise_factor = PROP_DENOISE_DEFAULT;

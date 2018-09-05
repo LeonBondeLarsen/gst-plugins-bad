@@ -83,7 +83,7 @@ struct _GstVideoAggregatorPadPrivate
 };
 
 
-G_DEFINE_TYPE (GstVideoAggregatorPad, gst_video_aggregator_pad,
+G_DEFINE_TYPE_WITH_PRIVATE (GstVideoAggregatorPad, gst_video_aggregator_pad,
     GST_TYPE_AGGREGATOR_PAD);
 
 static void
@@ -218,8 +218,6 @@ gst_video_aggregator_pad_class_init (GstVideoAggregatorPadClass * klass)
           DEFAULT_PAD_REPEAT_AFTER_EOS,
           G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
 
-  g_type_class_add_private (klass, sizeof (GstVideoAggregatorPadPrivate));
-
   aggpadclass->flush = GST_DEBUG_FUNCPTR (_flush_pad);
   aggpadclass->skip_buffer =
       GST_DEBUG_FUNCPTR (gst_video_aggregator_pad_skip_buffer);
@@ -231,9 +229,7 @@ gst_video_aggregator_pad_class_init (GstVideoAggregatorPadClass * klass)
 static void
 gst_video_aggregator_pad_init (GstVideoAggregatorPad * vaggpad)
 {
-  vaggpad->priv =
-      G_TYPE_INSTANCE_GET_PRIVATE (vaggpad, GST_TYPE_VIDEO_AGGREGATOR_PAD,
-      GstVideoAggregatorPadPrivate);
+  vaggpad->priv = gst_video_aggregator_pad_get_instance_private (vaggpad);
 
   vaggpad->priv->zorder = DEFAULT_PAD_ZORDER;
   vaggpad->priv->repeat_after_eos = DEFAULT_PAD_REPEAT_AFTER_EOS;
@@ -354,8 +350,8 @@ struct _GstVideoAggregatorConvertPadPrivate
   gboolean converter_config_changed;
 };
 
-G_DEFINE_TYPE (GstVideoAggregatorConvertPad, gst_video_aggregator_convert_pad,
-    GST_TYPE_VIDEO_AGGREGATOR_PAD);
+G_DEFINE_TYPE_WITH_PRIVATE (GstVideoAggregatorConvertPad,
+    gst_video_aggregator_convert_pad, GST_TYPE_VIDEO_AGGREGATOR_PAD);
 
 static void
 gst_video_aggregator_convert_pad_finalize (GObject * o)
@@ -596,9 +592,6 @@ gst_video_aggregator_convert_pad_class_init (GstVideoAggregatorConvertPadClass *
   gobject_class->set_property =
       GST_DEBUG_FUNCPTR (gst_video_aggregator_convert_pad_set_property);
 
-  g_type_class_add_private (klass,
-      sizeof (GstVideoAggregatorConvertPadPrivate));
-
   g_object_class_install_property (gobject_class,
       PROP_CONVERT_PAD_CONVERTER_CONFIG, g_param_spec_boxed ("converter-config",
           "Converter configuration",
@@ -622,9 +615,7 @@ static void
 gst_video_aggregator_convert_pad_init (GstVideoAggregatorConvertPad * vaggpad)
 {
   vaggpad->priv =
-      G_TYPE_INSTANCE_GET_PRIVATE (vaggpad,
-      GST_TYPE_VIDEO_AGGREGATOR_CONVERT_PAD,
-      GstVideoAggregatorConvertPadPrivate);
+      gst_video_aggregator_convert_pad_get_instance_private (vaggpad);
 
   vaggpad->priv->converted_buffer = NULL;
   vaggpad->priv->convert = NULL;
@@ -700,6 +691,7 @@ static void gst_video_aggregator_init (GstVideoAggregator * self,
     GstVideoAggregatorClass * klass);
 static void gst_video_aggregator_class_init (GstVideoAggregatorClass * klass);
 static gpointer gst_video_aggregator_parent_class = NULL;
+static gint video_aggregator_private_offset = 0;
 
 GType
 gst_video_aggregator_get_type (void)
@@ -714,9 +706,20 @@ gst_video_aggregator_get_type (void)
         sizeof (GstVideoAggregator),
         (GInstanceInitFunc) gst_video_aggregator_init,
         (GTypeFlags) G_TYPE_FLAG_ABSTRACT);
+
+    video_aggregator_private_offset =
+        g_type_add_instance_private (g_define_type_id,
+        sizeof (GstVideoAggregatorPrivate));
+
     g_once_init_leave (&g_define_type_id_volatile, g_define_type_id);
   }
   return g_define_type_id_volatile;
+}
+
+static inline GstVideoAggregatorPrivate *
+gst_video_aggregator_get_instance_private (GstVideoAggregator * self)
+{
+  return (G_STRUCT_MEMBER_P (self, video_aggregator_private_offset));
 }
 
 static void
@@ -891,13 +894,14 @@ gst_video_aggregator_default_update_caps (GstVideoAggregator * vagg,
     gst_caps_unref (tmp);
   }
 
+  color_name = gst_video_colorimetry_to_string (&best_info.colorimetry);
+
   GST_DEBUG_OBJECT (vagg,
       "The output format will now be : %d with chroma : %s and colorimetry %s",
       best_format, gst_video_chroma_to_string (best_info.chroma_site),
-      gst_video_colorimetry_to_string (&best_info.colorimetry));
+      color_name);
 
   best_format_caps = gst_caps_copy (caps);
-  color_name = gst_video_colorimetry_to_string (&best_info.colorimetry);
   gst_caps_set_simple (best_format_caps, "format", G_TYPE_STRING,
       gst_video_format_to_string (best_format), "chroma-site", G_TYPE_STRING,
       gst_video_chroma_to_string (best_info.chroma_site), "colorimetry",
@@ -943,6 +947,20 @@ gst_video_aggregator_default_update_src_caps (GstAggregator * agg,
   *ret = vagg_klass->update_caps (vagg, caps);
 
   return GST_FLOW_OK;
+}
+
+static gboolean
+_update_conversion_info (GstElement * element, GstPad * pad, gpointer user_data)
+{
+  GstVideoAggregatorPad *vaggpad = GST_VIDEO_AGGREGATOR_PAD (pad);
+  GstVideoAggregatorPadClass *vaggpad_klass =
+      GST_VIDEO_AGGREGATOR_PAD_GET_CLASS (vaggpad);
+
+  if (vaggpad_klass->update_conversion_info) {
+    vaggpad_klass->update_conversion_info (vaggpad);
+  }
+
+  return TRUE;
 }
 
 static gboolean
@@ -997,15 +1015,8 @@ gst_video_aggregator_default_negotiated_src_caps (GstAggregator * agg,
   }
 
   /* Then browse the sinks once more, setting or unsetting conversion if needed */
-  for (l = GST_ELEMENT (vagg)->sinkpads; l; l = l->next) {
-    GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (l->data);
-    GstVideoAggregatorPadClass *vaggpad_klass =
-        GST_VIDEO_AGGREGATOR_PAD_GET_CLASS (pad);
-
-    if (vaggpad_klass->update_conversion_info) {
-      vaggpad_klass->update_conversion_info (pad);
-    }
-  }
+  gst_element_foreach_sink_pad (GST_ELEMENT_CAST (vagg),
+      _update_conversion_info, NULL);
 
   if (vagg->priv->current_caps == NULL ||
       gst_caps_is_equal (caps, vagg->priv->current_caps) == FALSE) {
@@ -1028,6 +1039,7 @@ gst_video_aggregator_get_sinkpads_interlace_mode (GstVideoAggregator * vagg,
 {
   GList *walk;
 
+  GST_OBJECT_LOCK (vagg);
   for (walk = GST_ELEMENT (vagg)->sinkpads; walk; walk = g_list_next (walk)) {
     GstVideoAggregatorPad *vaggpad = walk->data;
 
@@ -1036,9 +1048,11 @@ gst_video_aggregator_get_sinkpads_interlace_mode (GstVideoAggregator * vagg,
     if (vaggpad->info.finfo
         && GST_VIDEO_INFO_FORMAT (&vaggpad->info) != GST_VIDEO_FORMAT_UNKNOWN) {
       *mode = GST_VIDEO_INFO_INTERLACE_MODE (&vaggpad->info);
+      GST_OBJECT_UNLOCK (vagg);
       return TRUE;
     }
   }
+  GST_OBJECT_UNLOCK (vagg);
   return FALSE;
 }
 
@@ -1402,7 +1416,7 @@ gst_video_aggregator_fill_queues (GstVideoAggregator * vagg,
       start_time = GST_BUFFER_TIMESTAMP (buf);
       if (start_time == -1) {
         gst_buffer_unref (buf);
-        GST_DEBUG_OBJECT (pad, "Need timestamped buffers!");
+        GST_ERROR_OBJECT (pad, "Need timestamped buffers!");
         GST_OBJECT_UNLOCK (vagg);
         return GST_FLOW_ERROR;
       }
@@ -2514,7 +2528,9 @@ gst_video_aggregator_class_init (GstVideoAggregatorClass * klass)
 
   gst_video_aggregator_parent_class = g_type_class_peek_parent (klass);
 
-  g_type_class_add_private (klass, sizeof (GstVideoAggregatorPrivate));
+  if (video_aggregator_private_offset != 0)
+    g_type_class_adjust_private_offset (klass,
+        &video_aggregator_private_offset);
 
   gobject_class->finalize = gst_video_aggregator_finalize;
   gobject_class->dispose = gst_video_aggregator_dispose;
@@ -2555,9 +2571,7 @@ static void
 gst_video_aggregator_init (GstVideoAggregator * vagg,
     GstVideoAggregatorClass * klass)
 {
-  vagg->priv =
-      G_TYPE_INSTANCE_GET_PRIVATE (vagg, GST_TYPE_VIDEO_AGGREGATOR,
-      GstVideoAggregatorPrivate);
+  vagg->priv = gst_video_aggregator_get_instance_private (vagg);
 
   vagg->priv->current_caps = NULL;
 

@@ -32,17 +32,70 @@
 #define GST_CAT_DEFAULT gst_debug_srt
 GST_DEBUG_CATEGORY (GST_CAT_DEFAULT);
 
+static GSocketAddress *
+gst_srt_socket_address_new (GstElement * elem, const gchar * host, guint16 port)
+{
+  GInetAddress *iaddr = NULL;
+  GSocketAddress *addr = NULL;
+  GError *error = NULL;
+
+  if (host == NULL) {
+    iaddr = g_inet_address_new_any (G_SOCKET_FAMILY_IPV4);
+  } else {
+    iaddr = g_inet_address_new_from_string (host);
+  }
+
+  if (!iaddr) {
+    GList *results;
+    GResolver *resolver = g_resolver_get_default ();
+
+    results = g_resolver_lookup_by_name (resolver, host, NULL, &error);
+
+    if (!results) {
+      GST_ERROR_OBJECT (elem, "Failed to resolve %s: %s", host, error->message);
+      g_object_unref (resolver);
+      goto failed;
+    }
+
+    iaddr = G_INET_ADDRESS (g_object_ref (results->data));
+
+    g_resolver_free_addresses (results);
+    g_object_unref (resolver);
+  }
+#ifndef GST_DISABLE_GST_DEBUG
+  {
+    gchar *ip = g_inet_address_to_string (iaddr);
+
+    GST_DEBUG_OBJECT (elem, "IP address for host %s is %s", host, ip);
+    g_free (ip);
+  }
+#endif
+
+  addr = g_inet_socket_address_new (iaddr, port);
+  g_object_unref (iaddr);
+
+  return addr;
+
+failed:
+  g_clear_error (&error);
+
+  return NULL;
+}
+
 SRTSOCKET
-gst_srt_client_connect_full (GstElement * elem, int sender,
+gst_srt_client_connect (GstElement * elem, int sender,
     const gchar * host, guint16 port, int rendez_vous,
     const gchar * bind_address, guint16 bind_port, int latency,
-    GSocketAddress ** socket_address, gint * poll_id, gchar * passphrase,
+    GSocketAddress ** socket_address, gint * poll_id, const gchar * passphrase,
     int key_length)
 {
   SRTSOCKET sock = SRT_INVALID_SOCK;
   GError *error = NULL;
   gpointer sa;
   size_t sa_len;
+  int poll_event = SRT_EPOLL_ERR;
+
+  poll_event |= sender ? SRT_EPOLL_OUT : SRT_EPOLL_IN;
 
   if (host == NULL) {
     GST_ELEMENT_ERROR (elem, RESOURCE, OPEN_READ, ("Invalid host"),
@@ -50,7 +103,7 @@ gst_srt_client_connect_full (GstElement * elem, int sender,
     goto failed;
   }
 
-  *socket_address = g_inet_socket_address_new_from_string (host, port);
+  *socket_address = gst_srt_socket_address_new (elem, host, port);
 
   if (*socket_address == NULL) {
     GST_ELEMENT_ERROR (elem, RESOURCE, OPEN_READ, ("Invalid host"),
@@ -78,7 +131,6 @@ gst_srt_client_connect_full (GstElement * elem, int sender,
   srt_setsockopt (sock, 0, SRTO_TSBPDMODE, &(int) {
       1}, sizeof (int));
 
-  /* This is a sink, we're always a receiver */
   srt_setsockopt (sock, 0, SRTO_SENDER, &sender, sizeof (int));
 
   srt_setsockopt (sock, 0, SRTO_TSBPDDELAY, &latency, sizeof (int));
@@ -137,8 +189,7 @@ gst_srt_client_connect_full (GstElement * elem, int sender,
     goto failed;
   }
 
-  srt_epoll_add_usock (*poll_id, sock, &(int) {
-      SRT_EPOLL_OUT});
+  srt_epoll_add_usock (*poll_id, sock, &poll_event);
 
   if (srt_connect (sock, sa, sa_len) == SRT_ERROR) {
     GST_ELEMENT_ERROR (elem, RESOURCE, OPEN_READ, ("Connection error"),
@@ -166,14 +217,101 @@ failed:
 }
 
 SRTSOCKET
-gst_srt_client_connect (GstElement * elem, int sender,
-    const gchar * host, guint16 port, int rendez_vous,
-    const gchar * bind_address, guint16 bind_port, int latency,
-    GSocketAddress ** socket_address, gint * poll_id)
+gst_srt_server_listen (GstElement * elem, int sender, const gchar * host,
+    guint16 port, int latency, gint * poll_id, const gchar * passphrase,
+    int key_length)
 {
-  return gst_srt_client_connect_full (elem, sender, host, port,
-      rendez_vous, bind_address, bind_port, latency, socket_address, poll_id,
-      NULL, 0);
+  SRTSOCKET sock = SRT_INVALID_SOCK;
+  GError *error = NULL;
+  struct sockaddr sa;
+  size_t sa_len;
+  GSocketAddress *addr = NULL;
+
+  addr = gst_srt_socket_address_new (elem, host, port);
+
+  if (addr == NULL) {
+    GST_WARNING_OBJECT (elem,
+        "failed to extract host or port from the given URI");
+    goto failed;
+  }
+
+  sa_len = g_socket_address_get_native_size (addr);
+  if (!g_socket_address_to_native (addr, &sa, sa_len, &error)) {
+    GST_ELEMENT_ERROR (elem, RESOURCE, OPEN_READ, ("Invalid address"),
+        ("cannot resolve address (reason: %s)", error->message));
+    goto failed;
+  }
+
+  sock = srt_socket (sa.sa_family, SOCK_DGRAM, 0);
+  if (sock == SRT_INVALID_SOCK) {
+    GST_WARNING_OBJECT (elem, "failed to create SRT socket (reason: %s)",
+        srt_getlasterror_str ());
+    goto failed;
+  }
+
+  /* Make SRT server socket non-blocking */
+  /* for non-blocking srt_close() */
+  srt_setsockopt (sock, 0, SRTO_SNDSYN, &(int) {
+      0}, sizeof (int));
+
+  /* for non-blocking srt_accept() */
+  srt_setsockopt (sock, 0, SRTO_RCVSYN, &(int) {
+      0}, sizeof (int));
+
+  /* Make sure TSBPD mode is enable (SRT mode) */
+  srt_setsockopt (sock, 0, SRTO_TSBPDMODE, &(int) {
+      1}, sizeof (int));
+
+  srt_setsockopt (sock, 0, SRTO_SENDER, &sender, sizeof (int));
+  srt_setsockopt (sock, 0, SRTO_TSBPDDELAY, &latency, sizeof (int));
+
+  if (passphrase != NULL && passphrase[0] != '\0') {
+    srt_setsockopt (sock, 0, SRTO_PASSPHRASE, passphrase, strlen (passphrase));
+    srt_setsockopt (sock, 0, SRTO_PBKEYLEN, &key_length, sizeof (int));
+  }
+
+  *poll_id = srt_epoll_create ();
+  if (*poll_id == -1) {
+    GST_ELEMENT_ERROR (elem, LIBRARY, INIT, (NULL),
+        ("failed to create poll id for SRT socket (reason: %s)",
+            srt_getlasterror_str ()));
+    goto failed;
+  }
+
+  srt_epoll_add_usock (*poll_id, sock, &(int) {
+      SRT_EPOLL_IN | SRT_EPOLL_ERR});
+
+  if (srt_bind (sock, &sa, sa_len) == SRT_ERROR) {
+    GST_WARNING_OBJECT (elem, "failed to bind SRT server socket (reason: %s)",
+        srt_getlasterror_str ());
+    goto failed;
+  }
+
+  if (srt_listen (sock, 1) == SRT_ERROR) {
+    GST_WARNING_OBJECT (elem, "failed to listen SRT socket (reason: %s)",
+        srt_getlasterror_str ());
+    goto failed;
+  }
+
+  g_clear_object (&addr);
+
+  return sock;
+
+failed:
+  if (*poll_id != SRT_ERROR) {
+    srt_epoll_release (*poll_id);
+    *poll_id = SRT_ERROR;
+  }
+
+  if (sock != SRT_INVALID_SOCK) {
+    srt_close (sock);
+    sock = SRT_INVALID_SOCK;
+  }
+
+  g_clear_error (&error);
+  g_clear_object (&addr);
+
+  return SRT_INVALID_SOCK;
 }
 
 static gboolean

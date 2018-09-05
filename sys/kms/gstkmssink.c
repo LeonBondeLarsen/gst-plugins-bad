@@ -31,9 +31,14 @@
  * kmssink is a simple video sink that renders video frames directly
  * in a plane of a DRM device.
  *
+ * In advance usage, the behaviour of kmssink can be change using the
+ * supported properties. Note that plane and connectors IDs and properties can
+ * be enumerated using the modetest command line tool.
+ *
  * ## Example launch line
  * |[
  * gst-launch-1.0 videotestsrc ! kmssink
+ * gst-launch-1.0 videotestsrc ! kmssink plane-properties=s,rotation=4
  * ]|
  *
  */
@@ -85,10 +90,13 @@ enum
   PROP_CONNECTOR_ID,
   PROP_PLANE_ID,
   PROP_FORCE_MODESETTING,
+  PROP_RESTORE_CRTC,
   PROP_CAN_SCALE,
   PROP_DISPLAY_WIDTH,
   PROP_DISPLAY_HEIGHT,
-  PROP_N
+  PROP_CONNECTOR_PROPS,
+  PROP_PLANE_PROPS,
+  PROP_N,
 };
 
 static GParamSpec *g_properties[PROP_N] = { NULL, };
@@ -168,7 +176,7 @@ kms_open (gchar ** driver)
 {
   static const char *drivers[] = { "i915", "radeon", "nouveau", "vmwgfx",
     "exynos", "amdgpu", "imx-drm", "rockchip", "atmel-hlcdc", "msm",
-    "xlnx", "vc4", "meson", "sun4i-drm",
+    "xlnx", "vc4", "meson", "sun4i-drm", "mxsfb-drm",
     "xilinx_drm",               /* DEPRECATED. Replaced by xlnx */
   };
   int i, fd = -1;
@@ -414,7 +422,6 @@ configure_mode_setting (GstKMSSink * self, GstVideoInfo * vinfo)
   gboolean ret;
   drmModeConnector *conn;
   int err;
-  drmModeFB *fb;
   gint i;
   drmModeModeInfo *mode;
   guint32 fb_id;
@@ -422,7 +429,6 @@ configure_mode_setting (GstKMSSink * self, GstVideoInfo * vinfo)
 
   ret = FALSE;
   conn = NULL;
-  fb = NULL;
   mode = NULL;
   kmsmem = NULL;
 
@@ -440,13 +446,9 @@ configure_mode_setting (GstKMSSink * self, GstVideoInfo * vinfo)
   if (!conn)
     goto connector_failed;
 
-  fb = drmModeGetFB (self->fd, fb_id);
-  if (!fb)
-    goto framebuffer_failed;
-
   for (i = 0; i < conn->count_modes; i++) {
-    if (conn->modes[i].vdisplay == fb->height &&
-        conn->modes[i].hdisplay == fb->width) {
+    if (conn->modes[i].vdisplay == GST_VIDEO_INFO_HEIGHT (vinfo) &&
+        conn->modes[i].hdisplay == GST_VIDEO_INFO_WIDTH (vinfo)) {
       mode = &conn->modes[i];
       break;
     }
@@ -464,8 +466,6 @@ configure_mode_setting (GstKMSSink * self, GstVideoInfo * vinfo)
   ret = TRUE;
 
 bail:
-  if (fb)
-    drmModeFreeFB (fb);
   if (conn)
     drmModeFreeConnector (conn);
 
@@ -481,12 +481,6 @@ bo_failed:
 connector_failed:
   {
     GST_ERROR_OBJECT (self, "Could not find a valid monitor connector");
-    goto bail;
-  }
-framebuffer_failed:
-  {
-    GST_ERROR_OBJECT (self, "drmModeGetFB failed: %s (%d)",
-        strerror (errno), errno);
     goto bail;
   }
 mode_failed:
@@ -574,6 +568,127 @@ ensure_allowed_caps (GstKMSSink * self, drmModeConnector * conn,
 }
 
 static gboolean
+set_drm_property (gint fd, guint32 object, guint32 object_type,
+    drmModeObjectPropertiesPtr properties, const gchar * prop_name,
+    guint64 value)
+{
+  guint i;
+  gboolean ret = FALSE;
+
+  for (i = 0; i < properties->count_props && !ret; i++) {
+    drmModePropertyPtr property;
+
+    property = drmModeGetProperty (fd, properties->props[i]);
+
+    /* GstStructure parser limits the set of supported character, so we
+     * replace the invalid characters with '-'. In DRM, this is generally
+     * replacing spaces into '-'. */
+    g_strcanon (property->name, G_CSET_a_2_z G_CSET_A_2_Z G_CSET_DIGITS, '-');
+
+    if (!strcmp (property->name, prop_name)) {
+      drmModeObjectSetProperty (fd, object, object_type,
+          property->prop_id, value);
+      ret = TRUE;
+    }
+    drmModeFreeProperty (property);
+  }
+
+  return ret;
+}
+
+typedef struct
+{
+  GstKMSSink *self;
+  drmModeObjectPropertiesPtr properties;
+  guint obj_id;
+  guint obj_type;
+  const gchar *obj_type_str;
+} SetPropsIter;
+
+static gboolean
+set_obj_prop (GQuark field_id, const GValue * value, gpointer user_data)
+{
+  SetPropsIter *iter = user_data;
+  GstKMSSink *self = iter->self;
+  const gchar *name;
+  guint64 v;
+
+  name = g_quark_to_string (field_id);
+
+  if (G_VALUE_HOLDS (value, G_TYPE_INT))
+    v = g_value_get_int (value);
+  else if (G_VALUE_HOLDS (value, G_TYPE_UINT))
+    v = g_value_get_uint (value);
+  else if (G_VALUE_HOLDS (value, G_TYPE_INT64))
+    v = g_value_get_int64 (value);
+  else if (G_VALUE_HOLDS (value, G_TYPE_UINT64))
+    v = g_value_get_uint64 (value);
+  else {
+    GST_WARNING_OBJECT (self,
+        "'uint64' value expected for control '%s'.", name);
+    return TRUE;
+  }
+
+  if (set_drm_property (self->fd, iter->obj_id, iter->obj_type,
+          iter->properties, name, v)) {
+    GST_DEBUG_OBJECT (self,
+        "Set %s property '%s' to %" G_GUINT64_FORMAT,
+        iter->obj_type_str, name, v);
+  } else {
+    GST_WARNING_OBJECT (self,
+        "Failed to set %s property '%s' to %" G_GUINT64_FORMAT,
+        iter->obj_type_str, name, v);
+  }
+
+  return TRUE;
+}
+
+static void
+gst_kms_sink_update_properties (SetPropsIter * iter, GstStructure * props)
+{
+  GstKMSSink *self = iter->self;
+
+  iter->properties = drmModeObjectGetProperties (self->fd, iter->obj_id,
+      iter->obj_type);
+
+  gst_structure_foreach (props, set_obj_prop, iter);
+
+  drmModeFreeObjectProperties (iter->properties);
+}
+
+static void
+gst_kms_sink_update_connector_properties (GstKMSSink * self)
+{
+  SetPropsIter iter;
+
+  if (!self->connector_props)
+    return;
+
+  iter.self = self;
+  iter.obj_id = self->conn_id;
+  iter.obj_type = DRM_MODE_OBJECT_CONNECTOR;
+  iter.obj_type_str = "connector";
+
+  gst_kms_sink_update_properties (&iter, self->connector_props);
+}
+
+static void
+gst_kms_sink_update_plane_properties (GstKMSSink * self)
+{
+  SetPropsIter iter;
+
+  if (!self->plane_props)
+    return;
+
+  iter.self = self;
+  iter.obj_id = self->plane_id;
+  iter.obj_type = DRM_MODE_OBJECT_PLANE;
+  iter.obj_type_str = "plane";
+
+  gst_kms_sink_update_properties (&iter, self->plane_props);
+}
+
+static gboolean
 gst_kms_sink_start (GstBaseSink * bsink)
 {
   GstKMSSink *self;
@@ -624,6 +739,10 @@ gst_kms_sink_start (GstBaseSink * bsink)
     GST_DEBUG_OBJECT (self, "enabling modesetting");
     self->modesetting_enabled = TRUE;
     universal_planes = TRUE;
+  }
+
+  if (crtc->mode_valid && self->modesetting_enabled && self->restore_crtc) {
+    self->saved_crtc = (drmModeCrtc *) crtc;
   }
 
 retry_find_plane:
@@ -681,6 +800,9 @@ retry_find_plane:
   g_object_notify_by_pspec (G_OBJECT (self), g_properties[PROP_DISPLAY_WIDTH]);
   g_object_notify_by_pspec (G_OBJECT (self), g_properties[PROP_DISPLAY_HEIGHT]);
 
+  gst_kms_sink_update_connector_properties (self);
+  gst_kms_sink_update_plane_properties (self);
+
   ret = TRUE;
 
 bail:
@@ -688,7 +810,7 @@ bail:
     drmModeFreePlane (plane);
   if (pres)
     drmModeFreePlaneResources (pres);
-  if (crtc)
+  if (crtc != self->saved_crtc)
     drmModeFreeCrtc (crtc);
   if (conn)
     drmModeFreeConnector (conn);
@@ -773,6 +895,7 @@ static gboolean
 gst_kms_sink_stop (GstBaseSink * bsink)
 {
   GstKMSSink *self;
+  int err;
 
   self = GST_KMS_SINK (bsink);
 
@@ -787,6 +910,19 @@ gst_kms_sink_stop (GstBaseSink * bsink)
   gst_poll_remove_fd (self->poll, &self->pollfd);
   gst_poll_restart (self->poll);
   gst_poll_fd_init (&self->pollfd);
+
+  if (self->saved_crtc) {
+    drmModeCrtc *crtc = (drmModeCrtc *) self->saved_crtc;
+
+    err = drmModeSetCrtc (self->fd, crtc->crtc_id, crtc->buffer_id, crtc->x,
+        crtc->y, (uint32_t *) & self->conn_id, 1, &crtc->mode);
+    if (err)
+      GST_ERROR_OBJECT (self, "Failed to restore previous CRTC mode: %s",
+          g_strerror (errno));
+
+    drmModeFreeCrtc (crtc);
+    self->saved_crtc = NULL;
+  }
 
   if (self->fd >= 0) {
     drmClose (self->fd);
@@ -1606,9 +1742,32 @@ gst_kms_sink_set_property (GObject * object, guint prop_id,
     case PROP_FORCE_MODESETTING:
       sink->modesetting_enabled = g_value_get_boolean (value);
       break;
+    case PROP_RESTORE_CRTC:
+      sink->restore_crtc = g_value_get_boolean (value);
+      break;
     case PROP_CAN_SCALE:
       sink->can_scale = g_value_get_boolean (value);
       break;
+    case PROP_CONNECTOR_PROPS:{
+      const GstStructure *s = gst_value_get_structure (value);
+
+      g_clear_pointer (&sink->connector_props, gst_structure_free);
+
+      if (s)
+        sink->connector_props = gst_structure_copy (s);
+
+      break;
+    }
+    case PROP_PLANE_PROPS:{
+      const GstStructure *s = gst_value_get_structure (value);
+
+      g_clear_pointer (&sink->plane_props, gst_structure_free);
+
+      if (s)
+        sink->plane_props = gst_structure_copy (s);
+
+      break;
+    }
     default:
       if (!gst_video_overlay_set_property (object, PROP_N, prop_id, value))
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1640,6 +1799,9 @@ gst_kms_sink_get_property (GObject * object, guint prop_id,
     case PROP_FORCE_MODESETTING:
       g_value_set_boolean (value, sink->modesetting_enabled);
       break;
+    case PROP_RESTORE_CRTC:
+      g_value_set_boolean (value, sink->restore_crtc);
+      break;
     case PROP_CAN_SCALE:
       g_value_set_boolean (value, sink->can_scale);
       break;
@@ -1652,6 +1814,12 @@ gst_kms_sink_get_property (GObject * object, guint prop_id,
       GST_OBJECT_LOCK (sink);
       g_value_set_int (value, sink->vdisplay);
       GST_OBJECT_UNLOCK (sink);
+      break;
+    case PROP_CONNECTOR_PROPS:
+      gst_value_set_structure (value, sink->connector_props);
+      break;
+    case PROP_PLANE_PROPS:
+      gst_value_set_structure (value, sink->plane_props);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1668,6 +1836,8 @@ gst_kms_sink_finalize (GObject * object)
   g_clear_pointer (&sink->devname, g_free);
   g_clear_pointer (&sink->bus_id, g_free);
   gst_poll_free (sink->poll);
+  g_clear_pointer (&sink->connector_props, gst_structure_free);
+  g_clear_pointer (&sink->plane_props, gst_structure_free);
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -1776,6 +1946,19 @@ gst_kms_sink_class_init (GstKMSSinkClass * klass)
       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
 
   /**
+   * kmssink:restore-crtc:
+   *
+   * Restore previous CRTC setting if new CRTC mode was set forcefully.
+   * By default this is enabled if user set CRTC with a new mode on an already
+   * active CRTC wich was having a valid mode.
+   */
+  g_properties[PROP_RESTORE_CRTC] =
+      g_param_spec_boolean ("restore-crtc", "Restore CRTC mode",
+      "When enabled and CRTC was set with a new mode, previous CRTC mode will"
+      "be restored when going to NULL state.", TRUE,
+      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
+
+  /**
    * kmssink:can-scale:
    *
    * User can tell kmssink if the driver can support scale.
@@ -1808,6 +1991,32 @@ gst_kms_sink_class_init (GstKMSSinkClass * klass)
       g_param_spec_int ("display-height", "Display Height",
       "Height of the display surface in pixels", 0, G_MAXINT, 0,
       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * kmssink:connector-properties:
+   *
+   * Additional properties for the connector. Keys are strings and values
+   * unsigned 64 bits integers.
+   *
+   * Since: 1.16
+   */
+  g_properties[PROP_CONNECTOR_PROPS] =
+      g_param_spec_boxed ("connector-properties", "Connector Properties",
+      "Additionnal properties for the connector",
+      GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * kmssink:plane-properties:
+   *
+   * Additional properties for the plane. Keys are strings and values
+   * unsigned 64 bits integers.
+   *
+   * Since: 1.16
+   */
+  g_properties[PROP_PLANE_PROPS] =
+      g_param_spec_boxed ("plane-properties", "Connector Plane",
+      "Additionnal properties for the plane",
+      GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (gobject_class, PROP_N, g_properties);
 

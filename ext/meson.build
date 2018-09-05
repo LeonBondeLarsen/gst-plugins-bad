@@ -1,3 +1,4 @@
+# FIXME implement these
 subdir('assrender')
 subdir('aom')
 subdir('bs2b')
@@ -29,8 +30,8 @@ subdir('lv2')
 #subdir('modplug')
 subdir('mpeg2enc')
 subdir('mplex')
-#subdir('musepack')
-#subdir('neon')
+subdir('musepack')
+subdir('neon')
 #subdir('ofa')
 #subdir('openal')
 subdir('opencv')
@@ -45,14 +46,8 @@ subdir('rtmp')
 subdir('sbc')
 subdir('smoothstreaming')
 #subdir('sndfile')
-if cc.get_id() != 'msvc'
-  # soundtouch doesn't do exporting of symbols for DLLs and I'm not sure how to
-  # do that for C++ classes. -- Nirbheek
-  subdir('soundtouch')
-  # libspandsp has a bunch of portability issues in the headers
-  # If someone really wants to use this, it shouldn't be hard to port
-  subdir('spandsp')
-endif
+subdir('soundtouch')
+subdir('spandsp')
 #subdir('spc')
 subdir('srt')
 subdir('srtp')
@@ -63,8 +58,8 @@ subdir('voaacenc')
 #subdir('voamrwbenc')
 subdir('vulkan')
 subdir('wayland')
-subdir('webrtcdsp')
 subdir('webrtc')
+subdir('webrtcdsp')
 subdir('webp')
 subdir('x265')
 subdir('zbar')
